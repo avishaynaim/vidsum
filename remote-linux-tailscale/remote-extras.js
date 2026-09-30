@@ -329,7 +329,7 @@
       const when = v.createdAt ? new Date(v.createdAt).toLocaleDateString() : '';
       return el('label', { className: 'scope-item' }, box,
         el('span', { dir: 'auto', className: 'scope-title' }, v.title || v.videoId),
-        el('span', { className: 'muted' }, `${v.sourceTitle || 'Single video'} · ${when}`));
+        el('span', { className: 'muted' }, `${when} · \u2068${v.sourceTitle || 'Single video'}\u2069`));
     }));
     saveScope();
   }
@@ -402,7 +402,7 @@
           }));
           const when = video.createdAt ? new Date(video.createdAt).toLocaleDateString() : '';
           return el('section', { className: 'hit-video' }, title,
-            el('p', { className: 'muted' }, `${video.sourceTitle || 'Single video'} · ${when} · ${plural(video.matchCount, 'match', 'matches')}`),
+            el('p', { className: 'muted' }, `${plural(video.matchCount, 'match', 'matches')} · ${when} · \u2068${video.sourceTitle || 'Single video'}\u2069`),
             ...video.sections.flatMap((section) => section.passages.map((passage) => passageBlock(video, section, passage))));
         }));
     } catch (error) {
