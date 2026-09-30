@@ -35,7 +35,7 @@ function normalizeListUrl(input) {
 // deps.runYtDlp(args) -> stdout (injectable for tests).
 async function listVideos(input, { limit = 1 } = {}, deps = {}) {
   const target = normalizeListUrl(input);
-  const max = target.kind === 'channel' ? Math.min(Math.max(1, Number(limit) || 1), MAX_CHANNEL) : MAX_PLAYLIST;
+  const max = target.kind === 'channel' ? Math.min(Math.max(1, Math.floor(Number(limit)) || 1), MAX_CHANNEL) : MAX_PLAYLIST;
   let runYtDlp = deps.runYtDlp;
   if (!runYtDlp) {
     const transcript = require('./transcript');

@@ -86,4 +86,9 @@
 }
 #import-url:focus { outline: none; border-color: var(--accent); }
 #import-block .import-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; }
-#import-block .import-options select { width: 100%; margin-top: 4px; }
+#import-block .import-options select, #import-limit { width: 100%; margin-top: 4px; }
+#import-limit {
+  box-sizing: border-box; font: inherit; font-size: 13.5px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px;
+}
+@media (pointer: coarse) { #import-limit { min-height: 44px; } }

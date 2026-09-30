@@ -279,6 +279,8 @@ async function testImportList() {
   assert.deepStrictEqual(listed.videos.map((v) => v.videoId), ['AAAAAAAAAAA', 'CCCCCCCCCCC'], 'latest N, skipping upcoming and repeats');
   assert.strictEqual(listed.videos[1].durationSeconds, 3600);
   assert.ok(lastArgs.includes('--flat-playlist') && lastArgs[lastArgs.indexOf('--playlist-end') + 1] === '22', 'extra entries so skipped streams do not reduce the count');
+  await listVideos('https://www.youtube.com/@x', { limit: 7.8 }, { runYtDlp: fakeYtDlp });
+  assert.strictEqual(lastArgs[lastArgs.indexOf('--playlist-end') + 1], '27', 'a typed number is used as a whole number (7 + 20 spare)');
   await listVideos('https://www.youtube.com/@x', { limit: 999 }, { runYtDlp: fakeYtDlp });
   assert.strictEqual(lastArgs[lastArgs.indexOf('--playlist-end') + 1], '70', 'channels are capped at 50 (+20 spare)');
   await listVideos('https://www.youtube.com/playlist?list=PLa', { limit: 1 }, { runYtDlp: fakeYtDlp });

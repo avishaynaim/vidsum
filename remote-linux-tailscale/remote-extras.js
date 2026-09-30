@@ -181,8 +181,13 @@
     id: 'import-url', type: 'url', inputMode: 'url', autocomplete: 'off', spellcheck: false,
     placeholder: 'https://www.youtube.com/playlist?list=…  or  https://www.youtube.com/@channel',
   });
-  const importLimit = el('select', { id: 'import-limit' },
-    ...[1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50].map((n) => el('option', { value: String(n) }, String(n))));
+  // Type any number from 1 to 50, or pick a preset from the list.
+  const importLimit = el('input', {
+    id: 'import-limit', type: 'number', min: 1, max: 50, step: 1, value: '1', inputMode: 'numeric',
+  });
+  importLimit.setAttribute('list', 'import-limit-presets');
+  const importPresets = el('datalist', { id: 'import-limit-presets' },
+    ...[1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50].map((n) => el('option', { value: String(n) })));
   const importLevel = el('select', { id: 'import-level' },
     ...Object.entries(LEVEL_NAMES).map(([value, label]) => el('option', { value }, label)));
   const importButton = el('button', { className: 'primary', type: 'button' }, 'Add all videos');
@@ -192,7 +197,7 @@
     el('label', { className: 'field', htmlFor: 'import-url' }, 'Playlist link (all its videos) or channel link (its latest videos)'),
     importUrl,
     el('div', { className: 'import-options' },
-      el('label', { className: 'field' }, 'Latest videos from a channel', importLimit),
+      el('label', { className: 'field' }, 'Latest videos from a channel (1–50)', importLimit, importPresets),
       el('label', { className: 'field' }, 'Summary level', importLevel)),
     el('div', { className: 'row' }, importButton),
     importResult,
@@ -202,12 +207,18 @@
   importButton.addEventListener('click', async () => {
     const url = importUrl.value.trim();
     if (!url) { importResult.textContent = 'Paste a playlist or channel link first.'; return; }
+    const limit = Number(importLimit.value);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      importResult.textContent = 'Latest videos must be a whole number from 1 to 50.';
+      importLimit.focus();
+      return;
+    }
     importButton.disabled = true;
     importResult.textContent = 'Reading the list from YouTube…';
     try {
       const response = await fetch('/api/import', {
         method: 'POST', headers: { 'X-YT-Token': token(), 'Content-Type': 'application/json' }, cache: 'no-store',
-        body: JSON.stringify({ url, limit: Number(importLimit.value), summaryLevel: importLevel.value }),
+        body: JSON.stringify({ url, limit, summaryLevel: importLevel.value }),
         signal: AbortSignal.timeout(120000),
       });
       const r = await response.json();
