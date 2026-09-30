@@ -317,7 +317,9 @@
     });
     const settings = source.kind === 'channel' ? `Channel · latest ${source.limit || 1}` : 'Playlist · all videos';
     return el('div', { className: 'source-row' },
-      el('a', { className: 'source-title', href: source.url, target: '_blank', rel: 'noopener noreferrer', dir: 'auto' }, source.title || source.url),
+      el('a', { className: 'source-title', href: source.url, target: '_blank', rel: 'noopener noreferrer', dir: 'auto' },
+        // Entries saved before names were cleaned may still end in yt-dlp's " - Videos".
+        (source.title || source.url).replace(/\s+-\s+(Videos|Streams|Shorts|Live)$/i, '')),
       el('p', { className: 'muted' }, `${settings} · ${LEVEL_NAMES[source.summaryLevel] || source.summaryLevel}`),
       status,
       el('div', { className: 'row source-actions' }, run, edit, remove));
