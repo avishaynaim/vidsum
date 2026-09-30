@@ -33,8 +33,16 @@ function parseArgs(argv) {
   return result;
 }
 
-function randomToken() {
-  return crypto.randomBytes(24).toString('hex');
+// 20 letters/digits (~119 bits): short enough to paste or type on a phone without getting
+// cut off, still far beyond guessing.
+function randomToken(length = 20) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  let out = '';
+  while (out.length < length) {
+    const byte = crypto.randomBytes(1)[0];
+    if (byte < alphabet.length * 4) out += alphabet[byte % alphabet.length];
+  }
+  return out;
 }
 
 async function main() {

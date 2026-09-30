@@ -49,7 +49,7 @@ const env = display.displayEnv(':91', { WAYLAND_DISPLAY: 'wayland-0', XDG_SESSIO
 assert.deepStrictEqual(env, { DISPLAY: ':91', XDG_SESSION_TYPE: 'x11', HOME: '/h' });
 assert.deepStrictEqual(display.missingTools({ which: () => null, findNoVncDir: () => null }),
   ['Xvfb', 'x11vnc', 'websockify', 'novnc']);
-assert.match(randomToken(), /^[a-f0-9]{48}$/);
+assert.match(randomToken(), /^[A-HJ-NP-Za-km-z2-9]{20}$/);
 
 async function testDashboard() {
   const { createServer } = require('../server');
@@ -65,6 +65,16 @@ async function testDashboard() {
     const port = server.address().port;
     const denied = await fetch(`http://127.0.0.1:${port}/health`);
     assert.strictEqual(denied.status, 401);
+
+    // A browser without the key gets a login form, and the right key logs it in.
+    const loginPage = await fetch(`http://127.0.0.1:${port}/?token=cut-off`);
+    assert.strictEqual(loginPage.status, 401);
+    assert.match(await loginPage.text(), /Wrong key/);
+    const wrong = await fetch(`http://127.0.0.1:${port}/login`, { method: 'POST', body: new URLSearchParams({ token: 'nope' }), redirect: 'manual' });
+    assert.strictEqual(wrong.status, 401);
+    const login = await fetch(`http://127.0.0.1:${port}/login`, { method: 'POST', body: new URLSearchParams({ token: ' bundle-test-token ' }), redirect: 'manual' });
+    assert.strictEqual(login.status, 303);
+    assert.match(login.headers.get('set-cookie'), /^ytsum_token=bundle-test-token;/);
 
     const health = await fetch(`http://127.0.0.1:${port}/health`, {
       headers: { Authorization: 'Bearer bundle-test-token' },
@@ -149,7 +159,7 @@ async function testIpRotation() {
 testDashboard()
   .then(testVncProxy)
   .then(testIpRotation)
-  .then(() => console.log(`${required.length + 38} bundle checks passed`))
+  .then(() => console.log(`${required.length + 44} bundle checks passed`))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exit(1);

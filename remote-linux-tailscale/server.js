@@ -259,6 +259,34 @@ function sendDashboard(res, extraHeaders = {}) {
   res.end(payload);
 }
 
+// Shown instead of a JSON 401 when a browser opens the dashboard without a valid key, so a
+// cut-off or missing ?token= link still lets the user paste the key and get in.
+function sendLogin(res, failed) {
+  const payload = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>YT Summary Remote</title>
+<style>body{font:16px system-ui,sans-serif;max-width:420px;margin:auto;padding:24px;background:#111827;color:#f9fafb}
+form{background:#1f2937;border-radius:14px;padding:18px;margin:16px 0}
+input,button{box-sizing:border-box;width:100%;padding:12px;margin:7px 0;border-radius:8px;border:1px solid #4b5563;font:inherit}
+button{background:#2563eb;color:white;border:0;font-weight:700}.error{color:#fca5a5}</style></head>
+<body><h1>YT Summary Remote</h1><form method="post" action="/login">
+<label for="token">Access key</label>
+<input id="token" name="token" type="password" required autocomplete="current-password" autofocus>
+${failed ? '<p class="error">Wrong key, try again.</p>' : ''}
+<button>Enter</button></form></body></html>`);
+  res.writeHead(failed ? 401 : 200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': payload.length,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
+  });
+  res.end(payload);
+}
+
+function sessionCookie(value) {
+  return `${COOKIE_NAME}=${encodeURIComponent(value)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`;
+}
+
 function readBody(req, maxBytes = 65536) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -346,7 +374,22 @@ function createServer({ token, runner, vncPort = null, rotatorRunner = null, ope
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
+
+      if (url.pathname === '/login' && req.method === 'POST' && token) {
+        const remoteAddress = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+        if (!netGuard.isAllowedAddress(remoteAddress)) { sendJson(res, 403, { error: 'Forbidden.' }); return; }
+        const supplied = (new URLSearchParams(await readBody(req, 4096)).get('token') || '').trim();
+        if (!tokenMatches(token, supplied)) { sendLogin(res, true); return; }
+        res.writeHead(303, { Location: '/', 'Set-Cookie': sessionCookie(supplied), 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
+
       const denied = checkAccess(req, url, token);
+      if (denied && denied.status === 401 && url.pathname === '/' && req.method === 'GET') {
+        sendLogin(res, url.searchParams.has('token'));
+        return;
+      }
       if (denied) {
         sendJson(res, denied.status, { error: denied.error });
         return;
@@ -357,7 +400,7 @@ function createServer({ token, runner, vncPort = null, rotatorRunner = null, ope
         // sign-in screen (plain links/WebSockets, no custom headers) is authorized too.
         const supplied = url.searchParams.get('token');
         const headers = supplied && token
-          ? { 'Set-Cookie': `${COOKIE_NAME}=${encodeURIComponent(supplied)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000` }
+          ? { 'Set-Cookie': sessionCookie(supplied) }
           : {};
         sendDashboard(res, headers);
         return;
