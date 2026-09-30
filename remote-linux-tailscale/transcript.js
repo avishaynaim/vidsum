@@ -11,6 +11,11 @@
 // this WILL need live debugging (e.g. logging the raw watch-page HTML) if it fails to find
 // `ytInitialPlayerResponse` or caption tracks for a given video/account.
 
+const { execFile } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
 function assertValidVideoId(videoId) {
@@ -107,13 +112,111 @@ async function readTrack(track) {
   }
 }
 
+// --- yt-dlp source (preferred) ---------------------------------------------------------
+// YouTube now serves empty caption bodies to plain timedtext fetches (they need a player
+// proof-of-origin token). yt-dlp keeps up with that, so it is tried first; the direct fetch
+// below remains as the fallback when yt-dlp is not installed.
+
+function findYtDlp(deps = {}) {
+  const exists = deps.exists || fs.existsSync;
+  const candidates = [
+    process.env.YTDLP_BIN,
+    // systemd user services do not have ~/.local/bin on PATH, so check it explicitly.
+    path.join(os.homedir(), '.local', 'bin', 'yt-dlp'),
+    '/usr/local/bin/yt-dlp',
+    '/usr/bin/yt-dlp',
+  ].filter(Boolean);
+  return candidates.find((c) => exists(c)) || null;
+}
+
+function runYtDlp(bin, args) {
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, { maxBuffer: 64 * 1024 * 1024, timeout: 120000 }, (err, stdout, stderr) => {
+      if (err) {
+        const lastError = String(stderr).split('\n').filter((l) => l.startsWith('ERROR')).pop();
+        reject(new Error(`yt-dlp failed: ${lastError || err.message}`));
+      } else resolve(stdout);
+    });
+  });
+}
+
+// Picks the caption track to download from yt-dlp's metadata: creator-made captions in the
+// video's language first, then the auto-generated original-language track, then anything.
+// Returns { lang, auto } or null.
+function chooseYtDlpTrack(info) {
+  const manual = Object.keys(info.subtitles || {}).filter((k) => k !== 'live_chat');
+  const auto = Object.keys(info.automatic_captions || {});
+  const videoLang = String(info.language || '').toLowerCase();
+  const sameLang = (k) => videoLang && (k.toLowerCase() === videoLang || k.toLowerCase().startsWith(`${videoLang}-`));
+  // Hebrew first (YouTube calls it "iw"): creator-made, then auto-generated original. The
+  // summary is always written in Hebrew anyway (chunk.js), so this is the best source.
+  const isHebrew = (k) => /^(iw|he)(-|$)/i.test(k);
+  const hebrewManual = manual.find(isHebrew);
+  if (hebrewManual) return { lang: hebrewManual, auto: false };
+  const hebrewOrig = auto.find((k) => isHebrew(k) && k.endsWith('-orig'));
+  if (hebrewOrig) return { lang: hebrewOrig, auto: true };
+
+  const pick = manual.find(sameLang) || null;
+  if (pick) return { lang: pick, auto: false };
+  // Several "-orig" tracks can be listed (e.g. en-US-orig on a Hebrew video); the one in the
+  // video's own language is the real original.
+  const orig = auto.find((k) => k.endsWith('-orig') && sameLang(k)) || (videoLang ? null : auto.find((k) => k.endsWith('-orig')));
+  if (orig) return { lang: orig, auto: true };
+  const autoSame = auto.find(sameLang);
+  if (autoSame) return { lang: autoSame, auto: true };
+  if (manual.length) return { lang: manual.find((k) => k.startsWith('en')) || manual[0], auto: false };
+  if (auto.length) return { lang: auto.find((k) => k === 'en') || auto[0], auto: true };
+  return null;
+}
+
+async function fetchTranscriptWithYtDlp(videoId, bin) {
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  const common = ['--no-warnings', '--no-playlist', '--js-runtimes', `node:${process.execPath}`];
+  const info = JSON.parse(await runYtDlp(bin, [...common, '--skip-download', '-J', url]));
+  const track = chooseYtDlpTrack(info);
+  if (!track) throw new Error('No caption tracks are available for this video.');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yt-summary-subs-'));
+  try {
+    await runYtDlp(bin, [...common, '--skip-download', track.auto ? '--write-auto-subs' : '--write-subs',
+      '--sub-langs', track.lang, '--sub-format', 'json3', '-o', path.join(dir, '%(id)s'), url]);
+    const file = fs.readdirSync(dir).find((f) => f.endsWith('.json3'));
+    if (!file) throw new Error(`yt-dlp did not produce the ${track.lang} caption file.`);
+    const lines = parseJson3(fs.readFileSync(path.join(dir, file), 'utf8'));
+    const text = lines.join(' ').replace(/\s+/g, ' ').trim();
+    if (!text) throw new Error('Caption track produced no text after parsing.');
+    return { text, title: info.title || videoId };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Fetches the transcript text and best-effort title for a public YouTube video, via yt-dlp
+ * when available, else the direct watch-page method below.
+ */
+async function fetchTranscript(videoId) {
+  assertValidVideoId(videoId);
+  const bin = findYtDlp();
+  if (!bin) return fetchTranscriptDirect(videoId);
+  try {
+    return await fetchTranscriptWithYtDlp(videoId, bin);
+  } catch (ytDlpError) {
+    try {
+      return await fetchTranscriptDirect(videoId);
+    } catch (directError) {
+      throw new Error(`${ytDlpError.message} (direct fallback also failed: ${directError.message})`);
+    }
+  }
+}
+
 /**
  * Fetches the transcript text and best-effort title for a public YouTube video.
  * Returns { text, title }. Throws with a descriptive message on failure - callers should
  * treat any thrown error here as a (probably) non-retryable "no transcript available"
  * condition unless it's a network-level error (fetch throwing TypeError / timeout).
  */
-async function fetchTranscript(videoId) {
+async function fetchTranscriptDirect(videoId) {
   assertValidVideoId(videoId);
   const html = await fetchText(`https://www.youtube.com/watch?v=${videoId}`, {
     headers: {
@@ -143,4 +246,4 @@ async function fetchTranscript(videoId) {
   return { text, title };
 }
 
-module.exports = { fetchTranscript, assertValidVideoId };
+module.exports = { fetchTranscript, fetchTranscriptDirect, assertValidVideoId, chooseYtDlpTrack, findYtDlp };

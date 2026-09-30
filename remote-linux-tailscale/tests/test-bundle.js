@@ -43,6 +43,14 @@ const headed = launcher.buildArgs({ port: 1, profileDir: '/p', headless: false, 
 assert.ok(headed.includes('--window-size=800,600'));
 assert.ok(!headed.includes('--headless=new'));
 
+const { chooseYtDlpTrack } = require('../transcript');
+assert.deepStrictEqual(chooseYtDlpTrack({ language: 'iw', subtitles: {}, automatic_captions: { en: [], 'en-US-orig': [], iw: [], 'iw-orig': [] } }), { lang: 'iw-orig', auto: true });
+assert.deepStrictEqual(chooseYtDlpTrack({ language: 'en', subtitles: { 'en-GB': [], live_chat: [] }, automatic_captions: { 'en-orig': [] } }), { lang: 'en-GB', auto: false });
+assert.deepStrictEqual(chooseYtDlpTrack({ language: null, subtitles: {}, automatic_captions: { fr: [], en: [] } }), { lang: 'en', auto: true });
+assert.strictEqual(chooseYtDlpTrack({ subtitles: {}, automatic_captions: {} }), null);
+assert.deepStrictEqual(chooseYtDlpTrack({ language: 'en', subtitles: { en: [], iw: [] }, automatic_captions: {} }), { lang: 'iw', auto: false });
+assert.deepStrictEqual(chooseYtDlpTrack({ language: 'en', subtitles: {}, automatic_captions: { 'en-orig': [], iw: [] } }), { lang: 'en-orig', auto: true }, 'machine-translated Hebrew is not preferred over the real original');
+
 const display = require('../display');
 assert.strictEqual(display.findFreeDisplay(90, (p) => p.includes('X90')), 91);
 const env = display.displayEnv(':91', { WAYLAND_DISPLAY: 'wayland-0', XDG_SESSION_TYPE: 'wayland', HOME: '/h' });
@@ -159,7 +167,7 @@ async function testIpRotation() {
 testDashboard()
   .then(testVncProxy)
   .then(testIpRotation)
-  .then(() => console.log(`${required.length + 44} bundle checks passed`))
+  .then(() => console.log(`${required.length + 50} bundle checks passed`))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exit(1);
