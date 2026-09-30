@@ -29,6 +29,9 @@
   const ipValue = el('b', {}, '…');
   const ipState = el('p', { className: 'muted' });
   const rotate = el('button', {}, 'Change IP now');
+  // Always-visible copy of the IP control in the sticky top bar (the panel sits below the
+  // video list on phones).
+  const topIp = el('button', { id: 'topbar-ip', type: 'button', hidden: true, title: 'Change the public IP' }, 'IP …');
   const signInBlock = el('div', { hidden: true },
     el('div', { className: 'panel-title' }, 'AI site logins'),
     loginList, loginSummary, signIn,
@@ -43,6 +46,8 @@
     const status = document.querySelector('.col .panel');
     if (status) status.after(panel);
     else document.body.append(panel);
+    const state = document.querySelector('.topbar #state');
+    if (state) state.before(topIp);
   }
 
   const LOGIN_TEXT = { 'signed-in': '✅', 'signed-out': '❌ not logged in', 'no-tab': '– not opened', loading: '… loading', unknown: '?' };
@@ -68,6 +73,8 @@
       const ip = await api('/ip');
       ipValue.textContent = ip.publicIp || (ip.state === 'rotating' ? 'changing…' : 'unknown');
       rotate.disabled = ip.state === 'rotating';
+      topIp.disabled = rotate.disabled;
+      topIp.textContent = ip.state === 'rotating' ? '🌐 Changing IP…' : `🌐 ${ip.publicIp || 'IP'} · Change IP`;
       if (ip.state === 'rotating') {
         ipState.textContent = `Changing IP (started ${new Date(ip.startedAt).toLocaleTimeString()})…`;
         next = 3000;
@@ -79,16 +86,20 @@
       }
     } catch {
       ipValue.textContent = 'reconnecting…';
+      topIp.textContent = '🌐 Reconnecting…';
       next = 5000;
     }
     ipTimer = setTimeout(refreshIp, next);
   }
-  rotate.addEventListener('click', async () => {
+  async function changeIp() {
     if (!confirm('Change the public IP now? The server goes offline for about 1–2 minutes.')) return;
     rotate.disabled = true;
-    try { await api('/ip/rotate', 'POST'); } catch (error) { ipState.textContent = error.message; }
+    topIp.disabled = true;
+    try { await api('/ip/rotate', 'POST'); } catch (error) { ipState.textContent = error.message; alert(error.message); }
     refreshIp();
-  });
+  }
+  rotate.addEventListener('click', changeIp);
+  topIp.addEventListener('click', changeIp);
 
   // ---- Summary viewer: tap a video tile to read its summary and parts here. ----
   async function post(path, body) {
@@ -162,6 +173,7 @@
   api('/config').then((config) => {
     signInBlock.hidden = !config.signIn;
     ipBlock.hidden = !config.ipRotation;
+    topIp.hidden = !config.ipRotation;
     panel.hidden = !config.signIn && !config.ipRotation;
     if (config.signIn) { refreshLogin(); setInterval(refreshLogin, 15000); }
     if (config.ipRotation) refreshIp();
