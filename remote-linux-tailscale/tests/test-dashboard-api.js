@@ -57,9 +57,25 @@ async function testLifecycle() {
   const second = await add(scheduler, 'BBBBBBBBBBB');
   assert.strictEqual(second.State, 'queued');
 
-  fake.pending.get('AAAAAAAAAAA').resolve({ text: 'סיכום', provider: 'Claude' });
+  // A finished part is visible (with its conversation link) before the video completes.
+  fake.pending.get('AAAAAAAAAAA').args.onPart({ index: 1, provider: 'ChatGPT', text: 'חלק 1', url: 'https://chatgpt.com/c/p1' });
+  let details = await handleApi(scheduler, 'POST', '/api/details', { jobId: job.Id });
+  assert.strictEqual(details.final, null);
+  assert.deepStrictEqual(details.parts.map((p) => p.text), ['חלק 1']);
+  assert.deepStrictEqual(job.PartResultUrls, ['https://chatgpt.com/c/p1']);
+
+  fake.pending.get('AAAAAAAAAAA').resolve({
+    text: 'סיכום', provider: 'Claude', url: 'https://claude.ai/chat/final1',
+    parts: [{ index: 1, provider: 'ChatGPT', text: 'חלק 1', url: 'https://chatgpt.com/c/p1' },
+      { index: 2, provider: 'Gemini', text: 'חלק 2', url: 'https://gemini.google.com/app/p2' }],
+  });
   await tick(); await tick();
   assert.strictEqual(job.State, 'completed');
+  assert.strictEqual(job.ResultUrl, 'https://claude.ai/chat/final1', '"Open final summary" opens the LLM conversation');
+  assert.deepStrictEqual(job.PartResultUrls, ['https://chatgpt.com/c/p1', 'https://gemini.google.com/app/p2']);
+  details = await handleApi(scheduler, 'POST', '/api/details', { jobId: job.Id });
+  assert.deepStrictEqual(details.final, { text: 'סיכום', provider: 'Claude', url: 'https://claude.ai/chat/final1' });
+  assert.deepStrictEqual(details.parts.map((p) => `${p.index}:${p.provider}`), ['1:ChatGPT', '2:Gemini']);
   assert.strictEqual(job.FinalResult, 'local');
   assert.deepStrictEqual(await handleApi(scheduler, 'POST', '/api/result', { jobId: job.Id }), { finalResult: 'סיכום' });
   assert.strictEqual(second.State, 'gemini', 'the next queued video starts');
@@ -182,6 +198,10 @@ function testServedPage() {
   assert.match(page.html, /setItem\('yt-summary-token',k\)/, 'the key is stored where app.js reads it');
   assert.match(page.html, /<script src="\/remote-extras.js" defer><\/script>/);
   assert.match(page.script, /'Open summary'/);
+  assert.match(page.script, /element.dataset.jobId = job.Id;/, 'tiles carry their job id for the viewer');
+  assert.match(page.html, /#full-result-text \{ min-height: 1280px;/);
+  assert.match(page.html, /<link rel="stylesheet" href="\/remote-responsive.css">\n<\/head>/);
+  assert.match(page.script, /Title: \u2068\$\{job.Title\}\u2069/, 'titles are direction-isolated');
   // No user-visible string (quoted literal) may still point at the Windows launcher/browser.
   assert.doesNotMatch(page.script, /'[^'\n]*(Start YT Summary|launcher|dedicated browser|local helper|local controller)[^'\n]*'/);
   assert.doesNotMatch(buildDashboard().html, /seed-token/);
@@ -203,6 +223,10 @@ async function testServerRoutes() {
     });
     assert.strictEqual((await created.json()).VideoId, 'FFFFFFFFFFF');
     assert.strictEqual((await fetch(`${base}/app.js`)).status, 200, 'dashboard code is served like on Windows');
+    const css = await fetch(`${base}/remote-responsive.css`);
+    assert.strictEqual(css.headers.get('content-type'), 'text/css; charset=utf-8');
+    assert.match(await css.text(), /@media \(max-width: 759px\)/);
+    assert.strictEqual((await fetch(`${base}/server.js`)).status, 401, 'only the listed static files are public');
     const page = await fetch(`${base}/`, { headers: { Cookie: 'ytsum_token=route-test-token' } });
     const pageText = await page.text();
     assert.match(pageText, /Video jobs/);

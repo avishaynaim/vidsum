@@ -29,7 +29,8 @@ const HTML_REPLACEMENTS = [
   ['<button id="copy-full-result" class="primary">Copy full transcript</button>', '<button id="copy-full-result" class="primary">Copy summary</button>'],
   ['aria-label="Complete structured transcript"', 'aria-label="Summary" dir="auto"'],
   ['#full-result-text { min-height: 220px; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }',
-    '#full-result-text { min-height: 320px; font-size: 14px; line-height: 1.6; unicode-bidi: plaintext; text-align: start; }'],
+    // 4x the original 320px, and grows to the whole text instead of scrolling inside a box.
+    '#full-result-text { min-height: 1280px; field-sizing: content; font-size: 14px; line-height: 1.6; unicode-bidi: plaintext; text-align: start; }'],
 ];
 
 const SCRIPT_REPLACEMENTS = [
@@ -61,6 +62,10 @@ const SCRIPT_REPLACEMENTS = [
   ["'The dedicated browser will reopen automatically for queued videos. Existing requests are retained.'",
     "'The server browser is not responding; queued videos wait for it. Existing requests are retained.'"],
   ["'Unable to stop the helper: '", "'Unable to stop all work: '"],
+  // U+2068/U+2069 isolate the title so a Hebrew title keeps its own direction after "Title:".
+  ["? `Title: ${job.Title}`", "? `Title: \u2068${job.Title}\u2069`"],
+  // Lets a tap on the tile open its summary viewer (remote-extras.js).
+  ["        element.className = 'job-card';", "        element.className = 'job-card';\n        element.dataset.jobId = job.Id;"],
 ];
 
 function applyReplacements(text, replacements, name) {
@@ -87,6 +92,8 @@ function buildDashboard({ seedToken = null } = {}) {
     : '';
   const marker = '<script src="/app.js" defer></script>';
   if (!page.text.includes(marker)) page.missing.push('index.html: app.js script tag');
+  if (!page.text.includes('</head>')) page.missing.push('index.html: </head>');
+  page.text = page.text.replace('</head>', '<link rel="stylesheet" href="/remote-responsive.css">\n</head>');
   const text = page.text.replace(marker, `${seed}${marker}\n<script src="/remote-extras.js" defer></script>`);
   return { html: text, script: app.text, missing: [...page.missing, ...app.missing] };
 }

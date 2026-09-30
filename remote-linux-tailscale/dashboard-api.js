@@ -88,9 +88,21 @@ class JobStore {
 
   remove(job) {
     this.jobs.splice(this.jobs.indexOf(job), 1);
-    for (const file of [`${job.Id}.json`, `${job.Id}.result.txt`]) {
+    for (const file of [`${job.Id}.json`, `${job.Id}.result.txt`, `${job.Id}.parts.json`]) {
       fs.rmSync(path.join(this.dir, file), { force: true });
     }
+  }
+
+  // Finished parts of a chunked video: [{ index, provider, text, url }], saved as they arrive.
+  getParts(job) {
+    try { return JSON.parse(fs.readFileSync(path.join(this.dir, `${job.Id}.parts.json`), 'utf8')); } catch { return []; }
+  }
+
+  savePart(job, part) {
+    const parts = this.getParts(job).filter((p) => p.index !== part.index);
+    parts.push(part);
+    parts.sort((a, b) => a.index - b.index);
+    atomicWrite(path.join(this.dir, `${job.Id}.parts.json`), JSON.stringify(parts));
   }
 
   setResult(job, text) {
@@ -106,6 +118,7 @@ class JobStore {
 
   clearResult(job) {
     fs.rmSync(path.join(this.dir, `${job.Id}.result.txt`), { force: true });
+    fs.rmSync(path.join(this.dir, `${job.Id}.parts.json`), { force: true });
     job.FinalResult = '';
     job.TranscriptSaved = false;
   }
@@ -180,7 +193,9 @@ async function fetchOEmbedTitle(videoId) {
 }
 
 class Scheduler {
-  constructor({ store, runner, fetchTitle = fetchOEmbedTitle, browserReady = async () => true, attachRunner = null, log = () => {} }) {
+  constructor({ store, runner, fetchTitle = fetchOEmbedTitle, browserReady = async () => true, attachRunner = null, log = () => {},
+    loadCheckpoint = (videoId) => require('./checkpoint').loadCheckpoint(videoId) }) {
+    this.loadCheckpoint = loadCheckpoint;
     this.store = store;
     this.runner = runner;
     this.fetchTitle = fetchTitle;
@@ -338,6 +353,11 @@ class Scheduler {
         videoId: job.VideoId, level: job.SummaryLevel, clear, signal: controller.signal,
         out: process.env.YT_SUMMARY_OUT || process.cwd(), maxMessageChars: 22000,
         providers: this.settings.enabledProviders,
+        onPart: (part) => {
+          this.store.savePart(job, part);
+          job.PartResultUrls = this.store.getParts(job).map((p) => p.url).filter(Boolean);
+          this.store.save(job);
+        },
         onInfo: ({ title, durationSeconds }) => {
           if (title && title !== job.VideoId && !job.Title) job.Title = title;
           if (durationSeconds) job.DurationSeconds = durationSeconds;
@@ -349,6 +369,10 @@ class Scheduler {
         this.log(`[${job.VideoId}] ${message}`);
       });
       this.store.setResult(job, result.text);
+      for (const part of result.parts || []) this.store.savePart(job, part);
+      job.ResultUrl = result.url || '';
+      job.PartResultUrls = (result.parts || []).map((p) => p.url).filter(Boolean);
+      job.FinalProvider = result.provider;
       job.State = 'completed';
       job.Message = `Summary ready (final part via ${result.provider}).`;
       job.ProviderName = result.provider;
@@ -563,6 +587,29 @@ class Scheduler {
     return job;
   }
 
+  // Everything the tile viewer shows: the final summary (if done) and every finished part.
+  details(id) {
+    const job = this.find(id);
+    let final = null;
+    if (job.FinalResult === 'local') {
+      final = { text: this.store.getResult(job), provider: job.FinalProvider || job.ProviderName || '', url: job.ResultUrl || '' };
+    }
+    let parts = this.store.getParts(job);
+    if (!parts.length) {
+      // Videos summarized before parts were stored: the pipeline's own checkpoint still has
+      // them (without conversation links) while it matches this video's level.
+      const ckpt = this.loadCheckpoint(job.VideoId);
+      if (ckpt && ckpt.isChunked && ckpt.summaryLevel === job.SummaryLevel) {
+        parts = (ckpt.parts || []).map(({ index, provider, text, url }) => ({ index, provider, text, url: url || null }))
+          .sort((a, b) => a.index - b.index);
+      }
+    }
+    return {
+      id: job.Id, videoId: job.VideoId, title: job.Title, level: job.SummaryLevel, state: job.State,
+      message: job.Message, final, parts,
+    };
+  }
+
   saveSettings(body) {
     const next = { ...this.settings };
     let valid = false;
@@ -614,6 +661,7 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/watch-later': scheduler.setWatchLater(body.jobId, body.watchLater); return { updated: true };
     case '/api/set-job-level': scheduler.setLevel(body.jobId, body.summaryLevel); return { updated: true };
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
+    case '/api/details': return scheduler.details(body.jobId);
     case '/api/result': return { finalResult: scheduler.store.getResult(scheduler.find(body.jobId)) };
     case '/api/clear-errors': return { cleared: scheduler.clearWhere((j) => j.State === 'error') };
     case '/api/clear-cancelled': return { cleared: scheduler.clearWhere((j) => ['cancelled', 'reviewed'].includes(j.State)) };

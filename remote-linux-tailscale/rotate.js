@@ -45,7 +45,7 @@ function throwIfStopped(signal) {
  * Runs one stage (send `prompt`, get a reply) with full rotation/retry semantics.
  * `checkpoint.rotationCursor` is read for the starting provider and updated in place as
  * rotation proceeds; the caller is responsible for persisting the checkpoint afterward.
- * Returns { text, provider }.
+ * Returns { text, provider, url }.
  */
 async function runStage(checkpoint, prompt, { onStatus = () => {}, signal = null, providers = null } = {}) {
   // `providers` = the dashboard's enabled providers (in rotation order); default all three.
@@ -70,9 +70,10 @@ async function runStage(checkpoint, prompt, { onStatus = () => {}, signal = null
       try {
         throwIfStopped(signal);
         onStatus(`Sending to ${provider}...`);
-        const text = await sendToProvider(provider, prompt, { signal });
+        const reply = await sendToProvider(provider, prompt, { signal });
         checkpoint.rotationCursor = next(provider);
-        return { text, provider };
+        // { text, url } from send.js; a plain string is accepted too.
+        return typeof reply === 'string' ? { text: reply, provider, url: null } : { text: reply.text, provider, url: reply.url || null };
       } catch (err) {
         if (err instanceof StoppedError || (signal && signal.aborted)) throw new StoppedError();
         if (err instanceof DefiniteRejectionError) {

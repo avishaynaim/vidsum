@@ -46,6 +46,7 @@ async function findOrOpenTab(cfg) {
 function stateExpression(cfg) {
   return `(() => {
     const visible = (e) => e && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+    const href = location.href;
     const editor = ${JSON.stringify(cfg.editorSelectors)}.map((s) => document.querySelector(s)).find(visible) || null;
     const assistants = [...document.querySelectorAll(${JSON.stringify(cfg.assistantMessageSelector)})];
     const last = assistants[assistants.length - 1];
@@ -56,6 +57,7 @@ function stateExpression(cfg) {
     const error = document.querySelector(${JSON.stringify(cfg.errorSelector)});
     return {
       host: location.host,
+      href,
       loaded: document.readyState === 'complete',
       hasEditor: !!editor,
       editorText: editor ? (editor.value !== undefined && editor.tagName === 'TEXTAREA' ? editor.value : editor.innerText).trim().length : 0,
@@ -98,6 +100,12 @@ function sendButtonExpression(cfg) {
     const r = button.getBoundingClientRect();
     return r.width && r.height ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
   })()`;
+}
+
+// The canonical conversation link (the same forms the dashboard accepts), or null.
+function conversationUrl(href) {
+  const m = /^https:\/\/(chatgpt\.com\/c\/[A-Za-z0-9_-]+|gemini\.google\.com\/app\/[A-Za-z0-9_-]+|claude\.ai\/chat\/[A-Za-z0-9_-]+)(?:[/?#]|$)/.exec(href || '');
+  return m ? `https://${m[1]}` : null;
 }
 
 async function readState(ws, cfg) {
@@ -190,7 +198,7 @@ async function pollForReply(ws, cfg, baseline, { timeoutMs = 600000, pollMs = 15
       if (stable >= 2) {
         const classification = classifyFailure(s.lastText, false);
         if (isDefiniteRejection(classification)) throw new DefiniteRejectionError(classification, s.lastText);
-        return s.lastText;
+        return { text: s.lastText, url: conversationUrl(s.href) };
       }
     } else {
       stable = 0;
@@ -209,7 +217,8 @@ async function pollForReply(ws, cfg, baseline, { timeoutMs = 600000, pollMs = 15
 }
 
 /**
- * Sends `prompt` to `providerName` and returns the assistant's reply text.
+ * Sends `prompt` to `providerName` and returns { text, url }: the assistant's reply and the
+ * conversation's link (null if the provider did not give it a stable address).
  * Throws DefiniteRejectionError for immediate-rotate cases, AmbiguousServiceError for
  * ambiguous post-send state, or a plain Error for a CDP-level problem (which cdp.js's
  * isTransientInfrastructureError() can further classify for bounded infra retry).
@@ -256,4 +265,4 @@ async function readConversation(url, { timeoutMs = 60000 } = {}) {
   }
 }
 
-module.exports = { sendToProvider, readConversation, DefiniteRejectionError, AmbiguousServiceError };
+module.exports = { sendToProvider, readConversation, conversationUrl, DefiniteRejectionError, AmbiguousServiceError };

@@ -90,7 +90,75 @@
     refreshIp();
   });
 
+  // ---- Summary viewer: tap a video tile to read its summary and parts here. ----
+  async function post(path, body) {
+    const response = await fetch(path, {
+      method: 'POST', headers: { 'X-YT-Token': token(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), cache: 'no-store', signal: AbortSignal.timeout(15000),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
+    return data;
+  }
+
+  const viewer = el('dialog', { id: 'summary-viewer' });
+  const viewerTitle = el('h2', { dir: 'auto' });
+  const viewerMeta = el('p', { className: 'muted' });
+  const viewerBody = el('div', { className: 'viewer-body' });
+  const closeViewer = el('button', { className: 'viewer-close', type: 'button', ariaLabel: 'Close' }, '✕');
+  closeViewer.addEventListener('click', () => viewer.close());
+  viewer.addEventListener('click', (event) => { if (event.target === viewer) viewer.close(); }); // backdrop
+  viewer.append(el('div', { className: 'viewer-head' }, el('div', {}, viewerTitle, viewerMeta), closeViewer), viewerBody);
+
+  function textBlock(label, entry, open = true) {
+    const copy = el('button', { type: 'button' }, 'Copy');
+    copy.addEventListener('click', async (event) => {
+      event.preventDefault();
+      try { await navigator.clipboard.writeText(entry.text); copy.textContent = 'Copied'; }
+      catch { copy.textContent = 'Copy failed'; }
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+    });
+    const actions = el('span', { className: 'viewer-actions' }, copy);
+    if (entry.url) {
+      actions.append(el('a', { className: 'bookmark', href: entry.url, target: '_blank', rel: 'noopener noreferrer' },
+        `Open in ${entry.provider || 'the AI site'}`));
+    }
+    const heading = el('summary', {}, el('b', {}, label), entry.provider ? el('span', { className: 'muted' }, ` · ${entry.provider}`) : '', actions);
+    return el('details', { className: 'viewer-section', open }, heading, el('div', { className: 'viewer-text', dir: 'auto' }, entry.text));
+  }
+
+  async function openViewer(jobId) {
+    viewerTitle.textContent = 'Loading…';
+    viewerMeta.textContent = '';
+    viewerBody.replaceChildren();
+    if (!viewer.open) viewer.showModal();
+    try {
+      const d = await post('/api/details', { jobId });
+      viewerTitle.textContent = d.title || d.videoId;
+      viewerMeta.replaceChildren(
+        el('a', { href: `https://www.youtube.com/watch?v=${encodeURIComponent(d.videoId)}`, target: '_blank', rel: 'noopener noreferrer' }, d.videoId),
+        ` · ${d.level} · ${d.state}`);
+      const blocks = [];
+      if (d.final) blocks.push(textBlock('Final summary', d.final, true));
+      d.parts.forEach((part) => blocks.push(textBlock(`Part ${part.index} of ${Math.max(d.parts.length, part.index)}`, part, !d.final)));
+      if (!blocks.length) blocks.push(el('p', { className: 'muted' }, `No summary yet. ${d.message || ''}`));
+      else if (!d.final) blocks.unshift(el('p', { className: 'muted' }, `Still working: ${d.message || ''} Parts finished so far are below.`));
+      viewerBody.replaceChildren(...blocks);
+    } catch (error) {
+      viewerTitle.textContent = 'Could not load this summary';
+      viewerBody.replaceChildren(el('p', { className: 'muted' }, error.message));
+    }
+  }
+
+  // Tapping anywhere on a tile except its own buttons/links/menus opens the viewer.
+  document.addEventListener('click', (event) => {
+    const card = event.target.closest('.job-card[data-job-id]');
+    if (!card || event.target.closest('button, a, select, input, label, summary, textarea')) return;
+    openViewer(card.dataset.jobId);
+  });
+
   mount();
+  document.body.append(viewer);
   api('/config').then((config) => {
     signInBlock.hidden = !config.signIn;
     ipBlock.hidden = !config.ipRotation;

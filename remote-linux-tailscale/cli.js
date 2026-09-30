@@ -82,8 +82,10 @@ async function runChunkedStages(ckpt, plan, videoId, level, title, onStatus, sta
       // progress and stop retryably rather than silently corrupting or discarding work.
       throw Object.assign(new Error(`Chunk part ${index} failed on every provider: ${err.message}`), { retryable: true });
     }
-    ckpt.parts.push({ index, provider: result.provider, text: result.text });
+    const part = { index, provider: result.provider, text: result.text, url: result.url || null };
+    ckpt.parts.push(part);
     checkpointMod.saveCheckpoint(ckpt);
+    if (stageOptions.onPart) stageOptions.onPart(part);
     onStatus(`Chunk part ${index}/${plan.chunks.length}: done via ${result.provider}.`);
   }
 }
@@ -97,14 +99,14 @@ async function mergeStage(ckpt, videoId, level, title, onStatus, stageOptions = 
     // level), rather than silently emitting the raw part as the final answer.
     const prompt = chunk.newCombinePrompt({ summaries: orderedTexts, videoId, final: true, summaryLevel: level, language: 'auto', title });
     const result = await rotate.runStage(ckpt, prompt, { ...stageOptions, onStatus });
-    ckpt.finalResult = { text: result.text, provider: result.provider };
+    ckpt.finalResult = { text: result.text, provider: result.provider, url: result.url || null };
     checkpointMod.saveCheckpoint(ckpt);
     return ckpt.finalResult;
   }
   onStatus(`Combining ${orderedTexts.length} parts into the final summary.`);
   const prompt = chunk.newCombinePrompt({ summaries: orderedTexts, videoId, final: true, summaryLevel: level, language: 'auto', title });
   const result = await rotate.runStage(ckpt, prompt, { ...stageOptions, onStatus });
-  ckpt.finalResult = { text: result.text, provider: result.provider };
+  ckpt.finalResult = { text: result.text, provider: result.provider, url: result.url || null };
   checkpointMod.saveCheckpoint(ckpt);
   return ckpt.finalResult;
 }
@@ -118,7 +120,8 @@ async function runVideo(args, onStatus) {
   transcriptMod.assertValidVideoId(args.videoId);
   onStatus = onStatus || ((msg) => log(`[${args.videoId}]`, msg));
   // signal: AbortSignal from the dashboard's Stop/Pause; providers: its enabled providers.
-  const stageOptions = { signal: args.signal || null, providers: args.providers || null };
+  // onPart: called with { index, provider, text, url } as each part finishes.
+  const stageOptions = { signal: args.signal || null, providers: args.providers || null, onPart: args.onPart || null };
 
   if (args.clear) {
     checkpointMod.clearCheckpoint(args.videoId);
@@ -155,10 +158,10 @@ async function runVideo(args, onStatus) {
   } else if (!plan.isChunked) {
     if (ckpt.parts.length === 0) {
       const result = await rotate.runStage(ckpt, plan.singlePrompt, { ...stageOptions, onStatus });
-      ckpt.parts.push({ index: 1, provider: result.provider, text: result.text });
+      ckpt.parts.push({ index: 1, provider: result.provider, text: result.text, url: result.url || null });
       checkpointMod.saveCheckpoint(ckpt);
     }
-    ckpt.finalResult = { text: ckpt.parts[0].text, provider: ckpt.parts[0].provider };
+    ckpt.finalResult = { text: ckpt.parts[0].text, provider: ckpt.parts[0].provider, url: ckpt.parts[0].url || null };
     checkpointMod.saveCheckpoint(ckpt);
   } else {
     try {
@@ -193,7 +196,11 @@ async function runVideo(args, onStatus) {
   // The transcript no longer needs to be retained privately once the video is complete.
   checkpointMod.clearTranscriptCache(args.videoId);
 
-  return { outFile, text: ckpt.finalResult.text, provider: ckpt.finalResult.provider };
+  // parts: only for a chunked video (a single-stage video's one part IS the final summary).
+  return {
+    outFile, text: ckpt.finalResult.text, provider: ckpt.finalResult.provider, url: ckpt.finalResult.url || null,
+    parts: plan.isChunked ? ckpt.parts.slice().sort((a, b) => a.index - b.index) : [],
+  };
 }
 
 async function main() {

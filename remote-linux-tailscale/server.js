@@ -378,13 +378,12 @@ function createServer({
 
       // The dashboard's code is not secret (the Windows helper serves it openly too); the
       // page itself, the API and everything else need the key.
-      if (req.method === 'GET' && (url.pathname === '/app.js' || url.pathname === '/remote-extras.js')) {
+      const STATIC = { '/remote-extras.js': 'application/javascript; charset=utf-8', '/remote-responsive.css': 'text/css; charset=utf-8' };
+      if (req.method === 'GET' && (url.pathname === '/app.js' || STATIC[url.pathname])) {
         const remoteAddress = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
         if (!netGuard.isAllowedAddress(remoteAddress)) { sendJson(res, 403, { error: 'Forbidden.' }); return; }
-        const body = url.pathname === '/app.js'
-          ? buildDashboard().script
-          : fs.readFileSync(path.join(__dirname, 'remote-extras.js'));
-        sendPage(res, body, 'application/javascript; charset=utf-8');
+        if (url.pathname === '/app.js') sendPage(res, buildDashboard().script, 'application/javascript; charset=utf-8');
+        else sendPage(res, fs.readFileSync(path.join(__dirname, url.pathname.slice(1))), STATIC[url.pathname]);
         return;
       }
 
