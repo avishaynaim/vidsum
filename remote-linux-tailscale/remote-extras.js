@@ -268,9 +268,21 @@
   // Saved channels & playlists: every import is remembered so it can be checked again.
   const sourcesList = el('div', { className: 'sources-list' });
   const checkAll = el('button', { type: 'button', hidden: true }, 'Check all for new videos');
+  const refreshCounts = el('button', { type: 'button' }, 'Refresh counts');
+  const newTotal = el('span', { className: 'new-total', hidden: true });
   const sourcesBlock = el('div', { id: 'sources-block', hidden: true },
-    el('div', { className: 'sources-head' }, el('div', { className: 'panel-title' }, 'Saved channels & playlists'), checkAll),
+    el('div', { className: 'sources-head' },
+      el('div', { className: 'panel-title' }, 'Saved channels & playlists ', newTotal),
+      el('span', { className: 'row source-actions' }, refreshCounts, checkAll)),
+    el('p', { className: 'muted' }, 'New videos are counted automatically every 30 minutes (nothing is added until you press a button).'),
     sourcesList);
+  refreshCounts.addEventListener('click', async () => {
+    refreshCounts.disabled = true;
+    refreshCounts.textContent = 'Counting…';
+    try { await post('/api/sources/peek', {}); await loadSources(); }
+    catch (error) { importResult.textContent = `Could not refresh counts: ${error.message}`; }
+    finally { refreshCounts.disabled = false; refreshCounts.textContent = 'Refresh counts'; }
+  });
   importBlock.append(sourcesBlock);
 
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -285,11 +297,21 @@
 
   function sourceRow(source) {
     const status = el('p', { className: 'muted' });
+    const pending = source.pending;
+    const newCount = (pending && pending.count) || 0;
+    const counter = el('p', { className: newCount ? 'new-count has-new' : 'new-count' });
+    if (!pending) counter.textContent = 'New videos: not counted yet';
+    else {
+      const at = new Date(pending.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      counter.textContent = pending.error ? `Could not count new videos (${at}): ${pending.error}`
+        : newCount ? `🆕 ${plural(newCount, 'new video')} not summarized yet (checked ${at})`
+          : `No new videos since the last import (checked ${at})`;
+    }
     const last = source.lastResult || {};
     const when = source.lastRunAt ? new Date(source.lastRunAt).toLocaleString() : 'never';
     status.textContent = `Last checked ${when}: ${last.added || 0} new` +
       (last.alreadyDone ? `, ${last.alreadyDone} already summarized` : '') + (last.error ? ` (${last.error})` : '');
-    const run = el('button', { type: 'button', className: 'primary' }, 'Check for new videos');
+    const run = el('button', { type: 'button', className: 'primary' }, newCount ? `Add ${plural(newCount, 'new video')}` : 'Check for new videos');
     run.addEventListener('click', async () => {
       run.disabled = true;
       status.textContent = 'Checking YouTube for new videos…';
@@ -321,6 +343,7 @@
         // Entries saved before names were cleaned may still end in yt-dlp's " - Videos".
         (source.title || source.url).replace(/\s+-\s+(Videos|Streams|Shorts|Live)$/i, '')),
       el('p', { className: 'muted' }, `${settings} · ${LEVEL_NAMES[source.summaryLevel] || source.summaryLevel}`),
+      counter,
       status,
       el('div', { className: 'row source-actions' }, run, edit, remove));
   }
@@ -330,6 +353,9 @@
       const { sources } = await api('/api/sources');
       sourcesBlock.hidden = sources.length === 0;
       checkAll.hidden = sources.length < 2;
+      const total = sources.reduce((sum, src) => sum + ((src.pending && src.pending.count) || 0), 0);
+      newTotal.hidden = total === 0;
+      newTotal.textContent = `${total} new`;
       sourcesList.replaceChildren(...[...sources].reverse().map(sourceRow));
     } catch { /* offline */ }
   }
@@ -385,6 +411,7 @@
   const addPanel = document.querySelector('section.panel:has(#batch)');
   if (addPanel) addPanel.append(importBlock);
   loadSources();
+  setInterval(loadSources, 60000); // pick up the server's background counts
   api('/api/status').then((status) => { if (LEVEL_NAMES[status.summaryLevel]) importLevel.value = status.summaryLevel; }).catch(() => {});
   api('/config').then((config) => {
     signInBlock.hidden = !config.signIn;

@@ -134,3 +134,12 @@
 .job-card .job-source { display: block; font-size: 12.5px; font-weight: 650; color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
 .job-card .job-source:not([href]) { color: var(--muted); font-weight: 600; }
 .job-card a.job-source[href]:hover { text-decoration: underline; }
+
+/* New-video counters on saved channels/playlists */
+#sources-block .new-count { font-size: 13px; color: var(--muted); }
+#sources-block .new-count.has-new { color: var(--mint); font-weight: 750; }
+#sources-block .new-total {
+  display: inline-block; margin-left: 6px; padding: 1px 9px; border-radius: 999px; font-size: 11.5px;
+  letter-spacing: normal; text-transform: none; color: var(--bg); background: var(--mint); font-weight: 800;
+}
+#sources-block .new-total[hidden] { display: none; }

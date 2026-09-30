@@ -27,6 +27,8 @@ const MAX_UNFINISHED = 200;
 // Finished jobs kept (the Windows helper keeps 100). Higher here: on the server the summary
 // text lives with the job, and one channel import can add 50 at once.
 const HISTORY_KEEP = 1000;
+const SOURCE_PEEK_INTERVAL_MS = 30 * 60 * 1000; // how often saved lists are checked for new videos
+const SEEN_IDS_KEEP = 1000;
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
@@ -262,6 +264,12 @@ class Scheduler {
   startTimer() {
     this.timer = setInterval(() => this.tick().catch(() => {}), 5000);
     this.timer.unref();
+    // Saved channels/playlists: count new videos shortly after start, then every 30 minutes.
+    const peek = () => this.peekAllSources().catch(() => {});
+    this.peekStart = setTimeout(peek, 60 * 1000);
+    this.peekStart.unref();
+    this.peekTimer = setInterval(peek, SOURCE_PEEK_INTERVAL_MS);
+    this.peekTimer.unref();
   }
 
   async tick() {
@@ -384,13 +392,16 @@ class Scheduler {
       }
     }
     if (!body.labelOnly) {
-      result.source = this.rememberSource({ url: listed.url || body.url, kind: listed.kind, title: listed.title, limit, summaryLevel: level, result });
+      result.source = this.rememberSource({
+        url: listed.url || body.url, kind: listed.kind, title: listed.title, limit, summaryLevel: level, result,
+        seenIds: listed.videos.map((v) => v.videoId),
+      });
     }
     return result;
   }
 
   // Every successful import is remembered (one entry per link; importing it again updates it).
-  rememberSource({ url, kind, title, limit, summaryLevel, result }) {
+  rememberSource({ url, kind, title, limit, summaryLevel, result, seenIds = [] }) {
     const sources = this.store.loadSources();
     let source = sources.find((s) => s.url === url);
     if (!source) {
@@ -400,9 +411,51 @@ class Scheduler {
     Object.assign(source, {
       title: title || source.title || url, limit, summaryLevel, lastRunAt: now(),
       lastResult: { found: result.found, added: result.added, alreadyDone: result.alreadyDone, alreadyListed: result.alreadyListed, error: result.error },
+      // Every video listed at this check counts as seen, so later checks can tell what is new.
+      seenIds: [...new Set([...seenIds, ...(source.seenIds || [])])].slice(0, SEEN_IDS_KEEP),
+      pending: { count: 0, ids: [], checkedAt: now(), error: '' },
     });
     this.store.saveSources(sources);
     return source;
+  }
+
+  // Videos that appeared since the last import and have no job at the list's level yet.
+  // A channel lists newest first, so its new videos are the ones above the newest video that
+  // was already seen or already has a job; a playlist's are the entries not seen before.
+  async peekSource(id) {
+    const source = this.findSource(id);
+    const hasJob = (videoId) => this.store.jobs.some((j) => j.VideoId === videoId && j.SummaryLevel === source.summaryLevel);
+    const seen = new Set(source.seenIds || []);
+    let pending;
+    try {
+      const listed = await this.listVideos(source.url, { limit: Math.max(source.limit || 1, 50) });
+      let ids;
+      if (source.kind === 'channel') {
+        const stop = listed.videos.findIndex((v) => seen.has(v.videoId) || hasJob(v.videoId));
+        ids = listed.videos.slice(0, stop < 0 ? listed.videos.length : stop).map((v) => v.videoId);
+      } else {
+        ids = listed.videos.filter((v) => !seen.has(v.videoId) && !hasJob(v.videoId)).map((v) => v.videoId);
+      }
+      pending = { count: ids.length, ids, checkedAt: now(), error: '' };
+    } catch (err) {
+      pending = { ...(source.pending || { count: 0, ids: [] }), checkedAt: now(), error: err.message };
+    }
+    const sources = this.store.loadSources();
+    const entry = sources.find((s) => s.id === id);
+    if (entry) { entry.pending = pending; this.store.saveSources(sources); }
+    return { id, ...pending };
+  }
+
+  async peekAllSources() {
+    if (this.peeking) return { results: [], busy: true };
+    this.peeking = true;
+    try {
+      const results = [];
+      for (const source of this.store.loadSources()) results.push(await this.peekSource(source.id).catch((err) => ({ id: source.id, error: err.message })));
+      return { results };
+    } finally {
+      this.peeking = false;
+    }
   }
 
   findSource(id) {
@@ -415,7 +468,17 @@ class Scheduler {
   // labelOnly: tag videos that already have a job with this source, without adding any.
   runSource(id, { labelOnly = false } = {}) {
     const source = this.findSource(id);
-    return this.importList({ url: source.url, limit: source.limit || 1, summaryLevel: source.summaryLevel, labelOnly });
+    // Never leave a known new video behind: take at least as many as are waiting.
+    const limit = Math.max(source.limit || 1, (source.pending && source.pending.count) || 0);
+    return this.importList({ url: source.url, limit, summaryLevel: source.summaryLevel, labelOnly }).then((result) => {
+      if (limit !== (source.limit || 1)) {
+        // Keep the user's own "latest N" setting; the larger count was only for this run.
+        const sources = this.store.loadSources();
+        const entry = sources.find((s) => s.id === id);
+        if (entry) { entry.limit = source.limit; this.store.saveSources(sources); }
+      }
+      return result;
+    });
   }
 
   async runAllSources() {
@@ -783,6 +846,7 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/import': return scheduler.importList(body);
     case '/api/sources/run': return scheduler.runSource(body.id, { labelOnly: body.labelOnly === true });
     case '/api/sources/run-all': return scheduler.runAllSources();
+    case '/api/sources/peek': return body.id ? scheduler.peekSource(body.id) : scheduler.peekAllSources();
     case '/api/sources/update': return scheduler.updateSource(body);
     case '/api/sources/delete': scheduler.deleteSource(body.id); return { deleted: true };
     case '/api/result': return { finalResult: scheduler.store.getResult(scheduler.find(body.jobId)) };

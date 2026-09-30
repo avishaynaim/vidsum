@@ -354,6 +354,60 @@ async function testImportList() {
   await assert.rejects(handleApi(scheduler, 'POST', '/api/sources/run', { id: 'gone' }), (e) => e.status === 409);
 }
 
+async function testNewVideoCounts() {
+  // The channel's newest-first list; tests change it between checks.
+  let channel = ['V3xxxxxxxxx', 'V2xxxxxxxxx', 'V1xxxxxxxxx'];
+  let playlist = ['P1xxxxxxxxx', 'P2xxxxxxxxx'];
+  const fake = controllableRunner();
+  const store = new JobStore(tmpDir());
+  const scheduler = new Scheduler({
+    store, runner: fake.runner, fetchTitle: async () => '',
+    listVideos: async (url, { limit }) => {
+      const ids = url.includes('playlist') ? playlist : channel;
+      return { kind: url.includes('playlist') ? 'playlist' : 'channel', url, title: 'T', videos: ids.slice(0, url.includes('playlist') ? 200 : limit).map((videoId) => ({ videoId, title: videoId, durationSeconds: 0 })) };
+    },
+  });
+  const chanUrl = 'https://www.youtube.com/@c/videos';
+  const listUrl = 'https://www.youtube.com/playlist?list=PLx';
+  await handleApi(scheduler, 'POST', '/api/import', { url: chanUrl, limit: 2, summaryLevel: 'reg' }); // takes V3, V2
+  await handleApi(scheduler, 'POST', '/api/import', { url: listUrl, summaryLevel: 'reg' });
+  let { sources } = await handleApi(scheduler, 'GET', '/api/sources', null);
+  const chan = sources.find((x) => x.kind === 'channel');
+  const list = sources.find((x) => x.kind === 'playlist');
+  assert.strictEqual(chan.pending.count, 0, 'right after an import nothing is new');
+
+  // Nothing uploaded yet: V1 is older than what was imported, so it is not "new".
+  let peek = await handleApi(scheduler, 'POST', '/api/sources/peek', { id: chan.id });
+  assert.strictEqual(peek.count, 0);
+
+  // Three uploads on the channel, two videos added to the playlist.
+  channel = ['V6xxxxxxxxx', 'V5xxxxxxxxx', 'V4xxxxxxxxx', ...channel];
+  playlist = [...playlist, 'P3xxxxxxxxx', 'P4xxxxxxxxx'];
+  const all = await handleApi(scheduler, 'POST', '/api/sources/peek', {});
+  assert.deepStrictEqual(all.results.map((r) => r.count).sort(), [2, 3]);
+  ({ sources } = await handleApi(scheduler, 'GET', '/api/sources', null));
+  assert.deepStrictEqual(sources.find((x) => x.id === chan.id).pending.ids, ['V6xxxxxxxxx', 'V5xxxxxxxxx', 'V4xxxxxxxxx']);
+  assert.strictEqual(store.jobs.length, 4, 'counting never adds jobs');
+
+  // One of the new ones gets summarized some other way: it no longer counts.
+  await add(scheduler, 'V4xxxxxxxxx', { summaryLevel: 'reg' });
+  peek = await handleApi(scheduler, 'POST', '/api/sources/peek', { id: chan.id });
+  assert.deepStrictEqual(peek.ids, ['V6xxxxxxxxx', 'V5xxxxxxxxx']);
+
+  // A third upload: 3 new videos against a saved "latest 2"; "Add new videos" must take all 3.
+  channel = ['V7xxxxxxxxx', ...channel];
+  peek = await handleApi(scheduler, 'POST', '/api/sources/peek', { id: chan.id });
+  assert.strictEqual(peek.count, 3);
+  const run = await handleApi(scheduler, 'POST', '/api/sources/run', { id: chan.id });
+  assert.strictEqual(run.added, 3, 'all new videos are added, not just the latest 2');
+  ({ sources } = await handleApi(scheduler, 'GET', '/api/sources', null));
+  const after = sources.find((x) => x.id === chan.id);
+  assert.strictEqual(after.limit, 2, 'the saved "latest N" setting is kept');
+  assert.strictEqual(after.pending.count, 0);
+  peek = await handleApi(scheduler, 'POST', '/api/sources/peek', { id: list.id });
+  assert.deepStrictEqual(peek.ids, ['P3xxxxxxxxx', 'P4xxxxxxxxx']);
+}
+
 module.exports = async function run() {
   await testLifecycle();
   await testFailuresAndRetries();
@@ -362,6 +416,7 @@ module.exports = async function run() {
   testServedPage();
   await testServerRoutes();
   await testImportList();
+  await testNewVideoCounts();
 };
 
 if (require.main === module) {
