@@ -62,7 +62,9 @@ async function listVideos(input, { limit = 1 } = {}, deps = {}) {
     });
     if (videos.length >= max) break;
   }
-  return { kind: target.kind, url: target.url, title: String(info.title || '').trim(), videos };
+  // yt-dlp names a channel's tab list "<channel> - Videos"; keep just the channel name.
+  const title = String(info.title || '').trim().replace(/\s+-\s+(Videos|Streams|Shorts|Live)$/i, '');
+  return { kind: target.kind, url: target.url, title, videos };
 }
 
 module.exports = { normalizeListUrl, listVideos, MAX_PLAYLIST };

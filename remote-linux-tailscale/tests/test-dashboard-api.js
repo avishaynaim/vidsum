@@ -199,6 +199,8 @@ function testServedPage() {
   assert.match(page.html, /<script src="\/remote-extras.js" defer><\/script>/);
   assert.match(page.script, /'Open summary'/);
   assert.match(page.script, /element.dataset.jobId = job.Id;/, 'tiles carry their job id for the viewer');
+  assert.match(page.script, /row.source.className = 'job-source'/, 'tiles show where the video came from');
+  assert.match(page.script, /\$\{job.SourceTitle \|\| ''\}`.toLowerCase\(\)/, 'search matches the source name');
   assert.match(page.html, /#full-result-text \{ min-height: 1280px;/);
   assert.match(page.html, /<link rel="stylesheet" href="\/remote-responsive.css">\n<\/head>/);
   assert.match(page.script, /Title: \u2068\$\{job.Title\}\u2069/, 'titles are direction-isolated');
@@ -310,6 +312,9 @@ async function testImportList() {
     { found: 3, added: 1, alreadyDone: 1, alreadyListed: 1 });
   const added = store.jobs.find((j) => j.VideoId === 'CCCCCCCCCCC');
   assert.strictEqual(added.Title, 'Three');
+  assert.deepStrictEqual({ kind: added.SourceKind, title: added.SourceTitle }, { kind: 'channel', title: 'My channel' }, 'the job knows where it came from');
+  assert.strictEqual(done.SourceTitle, 'My channel', 'an existing job without a source gets labeled');
+  assert.deepStrictEqual((await handleApi(scheduler, 'POST', '/api/details', { jobId: added.Id })).source.title, 'My channel');
   assert.strictEqual(added.DurationSeconds, 3600);
   assert.strictEqual(store.jobs.filter((j) => j.VideoId === 'AAAAAAAAAAA').length, 1, 'no second job for a summarized video');
   assert.ok(other);
@@ -327,6 +332,10 @@ async function testImportList() {
   assert.strictEqual(sources[0].lastResult.added, 3);
 
   // Checking it again adds nothing new: every video already has a job at that level.
+  const before = store.jobs.length;
+  const labelOnly = await handleApi(scheduler, 'POST', '/api/sources/run', { id: sources[0].id, labelOnly: true });
+  assert.strictEqual(labelOnly.added, 0);
+  assert.strictEqual(store.jobs.length, before, 'label-only adds nothing');
   const again = await handleApi(scheduler, 'POST', '/api/sources/run', { id: sources[0].id });
   assert.deepStrictEqual({ added: again.added, skipped: again.alreadyDone + again.alreadyListed }, { added: 0, skipped: 3 });
 

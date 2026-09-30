@@ -212,7 +212,10 @@
       viewerTitle.textContent = d.title || d.videoId;
       viewerMeta.replaceChildren(
         el('a', { href: `https://www.youtube.com/watch?v=${encodeURIComponent(d.videoId)}`, target: '_blank', rel: 'noopener noreferrer' }, d.videoId),
-        ` · ${d.level} · ${d.state}`);
+        ` · ${d.level} · ${d.state} · `,
+        d.source
+          ? el('a', { href: d.source.url, target: '_blank', rel: 'noopener noreferrer', dir: 'auto' }, `From ${d.source.kind}: ${d.source.title}`)
+          : 'Single video');
       const blocks = [];
       if (d.final) blocks.push(textBlock('Final summary', d.final, true));
       d.parts.forEach((part) => blocks.push(textBlock(`Part ${part.index} of ${Math.max(d.parts.length, part.index)}`, part, !d.final)));

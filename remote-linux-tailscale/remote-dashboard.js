@@ -64,6 +64,15 @@ const SCRIPT_REPLACEMENTS = [
   ["'Unable to stop the helper: '", "'Unable to stop all work: '"],
   // U+2068/U+2069 isolate the title so a Hebrew title keeps its own direction after "Title:".
   ["? `Title: ${job.Title}`", "? `Title: \u2068${job.Title}\u2069`"],
+  // Where the video came from (a channel/playlist import, or added on its own), under its title.
+  ["        : `Title: YouTube video ${job.VideoId} · looking up title…`;",
+    "        : `Title: YouTube video ${job.VideoId} · looking up title…`;\n" +
+    "      if (!row.source) { row.source = document.createElement('a'); row.source.className = 'job-source'; row.source.target = '_blank'; row.source.rel = 'noopener noreferrer'; row.title.after(row.source); }\n" +
+    "      row.source.textContent = job.SourceTitle ? `From ${job.SourceKind === 'playlist' ? 'playlist' : 'channel'}: \\u2068${job.SourceTitle}\\u2069` : 'Single video';\n" +
+    "      if (job.SourceUrl) row.source.href = job.SourceUrl; else row.source.removeAttribute('href');"],
+  // Search also matches the channel/playlist name.
+  ["const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''}`.toLowerCase();",
+    "const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''} ${job.SourceTitle || ''}`.toLowerCase();"],
   // Lets a tap on the tile open its summary viewer (remote-extras.js).
   ["        element.className = 'job-card';", "        element.className = 'job-card';\n        element.dataset.jobId = job.Id;"],
 ];

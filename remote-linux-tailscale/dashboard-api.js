@@ -361,15 +361,21 @@ class Scheduler {
     }
     const result = { kind: listed.kind, title: listed.title, found: listed.videos.length, added: 0, alreadyDone: 0, alreadyListed: 0, notAdded: 0, error: '' };
     const limit = listed.kind === 'channel' ? Math.max(1, Math.floor(Number(body.limit)) || 1) : null;
+    // Each job remembers where it came from; shown on its tile and searchable.
+    const source = { SourceKind: listed.kind, SourceTitle: listed.title || listed.url || body.url, SourceUrl: listed.url || body.url };
     for (const video of listed.videos) {
       const existing = this.store.jobs.find((j) => j.VideoId === video.videoId && j.SummaryLevel === level);
       if (existing) {
         if (existing.State === 'completed') result.alreadyDone++; else result.alreadyListed++;
+        if (!existing.SourceTitle) { Object.assign(existing, source); this.store.save(existing); result.labeled = (result.labeled || 0) + 1; }
         continue;
       }
+      if (body.labelOnly) continue; // only label videos that already have a job
       try {
         const job = this.enqueue({ videoId: video.videoId, requestId: crypto.randomUUID(), title: video.title, summaryLevel: level });
-        if (video.durationSeconds && !job.DurationSeconds) { job.DurationSeconds = video.durationSeconds; this.store.save(job); }
+        if (video.durationSeconds && !job.DurationSeconds) job.DurationSeconds = video.durationSeconds;
+        Object.assign(job, source);
+        this.store.save(job);
         result.added++;
       } catch (err) {
         result.notAdded = listed.videos.length - result.added - result.alreadyDone - result.alreadyListed;
@@ -377,7 +383,9 @@ class Scheduler {
         break;
       }
     }
-    result.source = this.rememberSource({ url: listed.url || body.url, kind: listed.kind, title: listed.title, limit, summaryLevel: level, result });
+    if (!body.labelOnly) {
+      result.source = this.rememberSource({ url: listed.url || body.url, kind: listed.kind, title: listed.title, limit, summaryLevel: level, result });
+    }
     return result;
   }
 
@@ -404,9 +412,10 @@ class Scheduler {
   }
 
   // Checks a saved channel/playlist again with its saved count and level.
-  runSource(id) {
+  // labelOnly: tag videos that already have a job with this source, without adding any.
+  runSource(id, { labelOnly = false } = {}) {
     const source = this.findSource(id);
-    return this.importList({ url: source.url, limit: source.limit || 1, summaryLevel: source.summaryLevel });
+    return this.importList({ url: source.url, limit: source.limit || 1, summaryLevel: source.summaryLevel, labelOnly });
   }
 
   async runAllSources() {
@@ -714,6 +723,7 @@ class Scheduler {
     return {
       id: job.Id, videoId: job.VideoId, title: job.Title, level: job.SummaryLevel, state: job.State,
       message: job.Message, final, parts,
+      source: job.SourceTitle ? { kind: job.SourceKind, title: job.SourceTitle, url: job.SourceUrl } : null,
     };
   }
 
@@ -771,7 +781,7 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
     case '/api/details': return scheduler.details(body.jobId);
     case '/api/import': return scheduler.importList(body);
-    case '/api/sources/run': return scheduler.runSource(body.id);
+    case '/api/sources/run': return scheduler.runSource(body.id, { labelOnly: body.labelOnly === true });
     case '/api/sources/run-all': return scheduler.runAllSources();
     case '/api/sources/update': return scheduler.updateSource(body);
     case '/api/sources/delete': scheduler.deleteSource(body.id); return { deleted: true };

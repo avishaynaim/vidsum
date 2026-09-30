@@ -129,3 +129,8 @@
 #sources-block .source-title { font-weight: 700; color: var(--text); text-decoration: none; unicode-bidi: plaintext; overflow-wrap: anywhere; display: block; }
 #sources-block .source-title:hover { color: var(--accent); }
 #sources-block .source-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Where a video came from, under its title on the tile. */
+.job-card .job-source { display: block; font-size: 12.5px; font-weight: 650; color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+.job-card .job-source:not([href]) { color: var(--muted); font-weight: 600; }
+.job-card a.job-source[href]:hover { text-decoration: underline; }
