@@ -2,7 +2,12 @@
 // Fills a provider's composer, clicks Send, and waits for the finished reply - the Linux
 // equivalent of Send-YtComposer/Wait-YtAssistantReply in YtSummary.psm1, following the same
 // rules that made the Windows engine reliable:
-//   - every stage starts in a fresh chat, so an older answer can never be read as this one;
+//   - every stage runs in a NEW tab (closed afterwards) with a fresh chat: an older answer can
+//     never be read as this one, and a tab that crashed ("Aw, Snap!") is never reused. Reusing
+//     one tab per provider all day made them crash after ~60 videos, and every later attempt
+//     then timed out on the dead tab;
+//   - a crash during a stage is noticed at once (Inspector.targetCrashed) and reported as an
+//     infrastructure error, so rotate.js retries it on a fresh tab;
 //   - the tab is brought to the front with focus emulation, because Chrome pauses background
 //     tabs and the provider then never renders its answer;
 //   - text is typed with CDP Input.insertText and Send is clicked with real mouse events
@@ -32,14 +37,6 @@ class AmbiguousServiceError extends Error {
   constructor(detail) {
     super(`Ambiguous post-send service state: ${detail}`);
   }
-}
-
-async function findOrOpenTab(cfg) {
-  const targets = await cdp.listTargets();
-  const host = new URL(cfg.url).host;
-  let target = targets.find((t) => t.type === 'page' && cdp.hostOf(t.url) === host);
-  if (!target) target = await cdp.newTab(cfg.url);
-  return target;
 }
 
 // Page-side snapshot of the conversation, evaluated on every poll.
@@ -174,17 +171,37 @@ async function fillAndSend(ws, cfg, prompt) {
   return baseline;
 }
 
+// Marks ws.crashed when Chrome reports that this tab's page crashed.
+function watchForCrash(ws) {
+  ws.crashed = false;
+  ws.addEventListener('message', (event) => {
+    try { if (JSON.parse(event.data).method === 'Inspector.targetCrashed') ws.crashed = true; } catch { /* not JSON */ }
+  });
+}
+
+function throwIfCrashed(ws) {
+  if (ws.crashed) throw new Error('internal WebSocket error: the provider tab crashed');
+}
+
 async function pollForReply(ws, cfg, baseline, { timeoutMs = 600000, pollMs = 1500, signal = null } = {}) {
   const deadline = Date.now() + timeoutMs;
   let lastErrorText = '';
   let previous = null;
   let stable = 0;
   let unchanged = 0;
+  let unreadable = 0;
   while (Date.now() < deadline) {
     if (signal && signal.aborted) throw new Error('Stopped at your request.');
     await sleep(pollMs);
+    throwIfCrashed(ws);
     const s = await readState(ws, cfg).catch(() => null); // mid-navigation: just poll again
-    if (!s) continue;
+    if (!s) {
+      unreadable++;
+      // A page that cannot even evaluate "1" for ~45s is dead, not navigating.
+      if (unreadable >= 30) throw new Error('internal WebSocket error: the provider tab stopped responding');
+      continue;
+    }
+    unreadable = 0;
     const hasAnswer = s.assistantCount > baseline && s.lastText && !s.busy;
 
     if (s.errorText && !hasAnswer) {
@@ -226,14 +243,20 @@ async function pollForReply(ws, cfg, baseline, { timeoutMs = 600000, pollMs = 15
 async function sendToProvider(providerName, prompt, options = {}) {
   const cfg = providers[providerName];
   if (!cfg) throw new Error(`Unknown provider: ${providerName}`);
-  const target = await findOrOpenTab(cfg);
-  const ws = await cdp.connect(target.webSocketDebuggerUrl);
+  // A new tab for this stage only (see the module comment); closed when the stage ends.
+  const target = await cdp.newTab('about:blank');
+  let ws;
   try {
-    await cdp.sendCommand(ws, 'Page.enable');
+    ws = await cdp.connect(target.webSocketDebuggerUrl);
+    watchForCrash(ws);
+    await cdp.sendCommand(ws, 'Inspector.enable', {}, 10000).catch(() => {});
+    await cdp.sendCommand(ws, 'Page.enable', {}, 15000);
     const baseline = await fillAndSend(ws, cfg, prompt);
+    throwIfCrashed(ws);
     return await pollForReply(ws, cfg, baseline, options);
   } finally {
-    ws.close();
+    if (ws) ws.close();
+    await cdp.closeTab(target.id).catch(() => {});
   }
 }
 

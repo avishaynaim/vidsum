@@ -187,9 +187,13 @@ async function signInStatus() {
     let ws;
     try {
       ws = await cdp.connect(target.webSocketDebuggerUrl);
-      status[name] = await cdp.evaluate(ws, SIGNED_IN_CHECK);
+      const result = await cdp.sendCommand(ws, 'Runtime.evaluate', { expression: SIGNED_IN_CHECK, returnByValue: true }, 6000);
+      status[name] = result.result ? result.result.value : 'unknown';
     } catch {
-      status[name] = 'unknown';
+      // A crashed or hung tab: replace it with a fresh one instead of reporting it forever.
+      await cdp.closeTab(target.id).catch(() => {});
+      await cdp.newTab(config.providers[name].url).catch(() => {});
+      status[name] = 'loading';
     } finally {
       if (ws) ws.close();
     }
