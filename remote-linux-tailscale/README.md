@@ -80,6 +80,17 @@ Tailscale Funnel at `https://YOUR-MACHINE.YOUR-TAILNET.ts.net:8443/?token=TOKEN`
 address, so the token is the only lock; keep it secret. Turn it off with
 `tailscale funnel --https=8443 off`.
 
+**The dashboard is the same one as on Windows** (`../index.html` + `../app.js`,
+served unchanged apart from a few remote wording tweaks in `remote-dashboard.js`):
+batch add, drag-and-drop onto a depth, filters, search, history, Watch later,
+per-video levels, retry/stop/pause, clear buttons and bookmarks all work. Its
+`/api/*` is implemented by `dashboard-api.js`. Remote differences: one video runs
+at a time; the finished summary is kept on the server (*Open summary*); *Stop all
+work* holds the queue instead of shutting the server down; a **Remote server**
+panel adds AI-site login status, the sign-in screen and Change IP. Jobs, results
+and settings live in `~/.yt-summary-termux/dashboard/`. The old one-video page is
+still at `/simple`.
+
 **Sign in to the AI sites (once):** dashboard → *Open sign-in screen*. This
 shows the server's own Chrome inside your browser tab (noVNC); log in to
 ChatGPT, Gemini and Claude there. Chrome runs headed on a private virtual

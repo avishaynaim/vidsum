@@ -104,9 +104,10 @@ async function readState(ws, cfg) {
   return cdp.evaluate(ws, stateExpression(cfg));
 }
 
-async function waitFor(check, timeoutMs, pollMs = 500) {
+async function waitFor(check, timeoutMs, pollMs = 500, signal = null) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (signal && signal.aborted) throw new Error('Stopped at your request.');
     const value = await check();
     if (value) return value;
     await sleep(pollMs);
@@ -165,13 +166,14 @@ async function fillAndSend(ws, cfg, prompt) {
   return baseline;
 }
 
-async function pollForReply(ws, cfg, baseline, { timeoutMs = 600000, pollMs = 1500 } = {}) {
+async function pollForReply(ws, cfg, baseline, { timeoutMs = 600000, pollMs = 1500, signal = null } = {}) {
   const deadline = Date.now() + timeoutMs;
   let lastErrorText = '';
   let previous = null;
   let stable = 0;
   let unchanged = 0;
   while (Date.now() < deadline) {
+    if (signal && signal.aborted) throw new Error('Stopped at your request.');
     await sleep(pollMs);
     const s = await readState(ws, cfg).catch(() => null); // mid-navigation: just poll again
     if (!s) continue;
@@ -226,4 +228,32 @@ async function sendToProvider(providerName, prompt, options = {}) {
   }
 }
 
-module.exports = { sendToProvider, DefiniteRejectionError, AmbiguousServiceError };
+// Opens an existing conversation in a new background tab of the server's browser and returns
+// its last finished assistant answer (used by the dashboard's "Attach final summary link").
+async function readConversation(url, { timeoutMs = 60000 } = {}) {
+  const host = cdp.hostOf(url);
+  const name = Object.keys(providers).find((n) => new URL(providers[n].url).host === host);
+  if (!name) throw new Error('Unsupported provider conversation link.');
+  const cfg = providers[name];
+  const target = await cdp.newTab(url);
+  const ws = await cdp.connect(target.webSocketDebuggerUrl);
+  try {
+    await keepAwake(ws);
+    let previous = null;
+    let stable = 0;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await sleep(1500);
+      const s = await readState(ws, cfg).catch(() => null);
+      if (!s || !s.loaded || !s.lastText || s.busy) { stable = 0; continue; }
+      if (s.lastText === previous) stable++; else { stable = 0; previous = s.lastText; }
+      if (stable >= 2) return s.lastText;
+    }
+    throw new Error('No finished answer was found in that conversation (is the server browser logged in to it?).');
+  } finally {
+    ws.close();
+    await cdp.closeTab(target.id).catch(() => {});
+  }
+}
+
+module.exports = { sendToProvider, readConversation, DefiniteRejectionError, AmbiguousServiceError };

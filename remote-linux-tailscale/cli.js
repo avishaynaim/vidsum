@@ -60,7 +60,7 @@ function buildPlan(transcriptText, videoId, level, title, maxMessageChars) {
   });
 }
 
-async function runChunkedStages(ckpt, plan, videoId, level, title, onStatus) {
+async function runChunkedStages(ckpt, plan, videoId, level, title, onStatus, stageOptions = {}) {
   const doneIndexes = new Set(ckpt.parts.map((p) => p.index));
   for (let i = 0; i < plan.chunks.length; i++) {
     const index = i + 1;
@@ -68,9 +68,10 @@ async function runChunkedStages(ckpt, plan, videoId, level, title, onStatus) {
     onStatus(`Chunk part ${index}/${plan.chunks.length}: starting.`);
     let result;
     try {
-      result = await rotate.runStage(ckpt, plan.chunkPrompts[i], { onStatus });
+      result = await rotate.runStage(ckpt, plan.chunkPrompts[i], { ...stageOptions, onStatus });
     } catch (err) {
       checkpointMod.saveCheckpoint(ckpt); // persist rotation cursor progress even on failure
+      if (err.stopped) throw err;
       if (err instanceof rotate.AllProvidersFailedError && err.allSize && ckpt.parts.length === 0) {
         // Adaptive re-chunk: only safe when NO parts have completed yet for this video,
         // since re-chunking now would misalign already-saved part indexes against a new
@@ -87,7 +88,7 @@ async function runChunkedStages(ckpt, plan, videoId, level, title, onStatus) {
   }
 }
 
-async function mergeStage(ckpt, videoId, level, title, onStatus) {
+async function mergeStage(ckpt, videoId, level, title, onStatus, stageOptions = {}) {
   if (ckpt.finalResult) return ckpt.finalResult;
   const orderedTexts = ckpt.parts.slice().sort((a, b) => a.index - b.index).map((p) => p.text);
   if (orderedTexts.length === 1) {
@@ -95,13 +96,14 @@ async function mergeStage(ckpt, videoId, level, title, onStatus) {
     // matching the original tool's part->final flow (light touch-up / verbatim-join per
     // level), rather than silently emitting the raw part as the final answer.
     const prompt = chunk.newCombinePrompt({ summaries: orderedTexts, videoId, final: true, summaryLevel: level, language: 'auto', title });
-    const result = await rotate.runStage(ckpt, prompt, { onStatus });
+    const result = await rotate.runStage(ckpt, prompt, { ...stageOptions, onStatus });
     ckpt.finalResult = { text: result.text, provider: result.provider };
     checkpointMod.saveCheckpoint(ckpt);
     return ckpt.finalResult;
   }
+  onStatus(`Combining ${orderedTexts.length} parts into the final summary.`);
   const prompt = chunk.newCombinePrompt({ summaries: orderedTexts, videoId, final: true, summaryLevel: level, language: 'auto', title });
-  const result = await rotate.runStage(ckpt, prompt, { onStatus });
+  const result = await rotate.runStage(ckpt, prompt, { ...stageOptions, onStatus });
   ckpt.finalResult = { text: result.text, provider: result.provider };
   checkpointMod.saveCheckpoint(ckpt);
   return ckpt.finalResult;
@@ -115,6 +117,8 @@ async function mergeStage(ckpt, videoId, level, title, onStatus) {
 async function runVideo(args, onStatus) {
   transcriptMod.assertValidVideoId(args.videoId);
   onStatus = onStatus || ((msg) => log(`[${args.videoId}]`, msg));
+  // signal: AbortSignal from the dashboard's Stop/Pause; providers: its enabled providers.
+  const stageOptions = { signal: args.signal || null, providers: args.providers || null };
 
   if (args.clear) {
     checkpointMod.clearCheckpoint(args.videoId);
@@ -129,13 +133,14 @@ async function runVideo(args, onStatus) {
     const fetched = await transcriptMod.fetchTranscript(args.videoId);
     transcriptText = fetched.text;
     title = fetched.title;
+    if (args.onInfo) args.onInfo({ title: fetched.title, durationSeconds: fetched.durationSeconds || 0 });
     checkpointMod.saveTranscriptCache(args.videoId, transcriptText);
     onStatus(`Transcript fetched (${transcriptText.length} chars).`);
   } else {
     onStatus(`Reusing cached transcript (${transcriptText.length} chars) - resuming without re-fetch.`);
   }
 
-  let maxMessageChars = args.maxMessageChars;
+  let maxMessageChars = args.maxMessageChars || 22000;
   let plan = buildPlan(transcriptText, args.videoId, args.level, title, maxMessageChars);
   let ckpt = checkpointMod.initCheckpoint({
     videoId: args.videoId,
@@ -149,7 +154,7 @@ async function runVideo(args, onStatus) {
     onStatus('Checkpoint already has a final result; nothing to do. Pass --clear to redo.');
   } else if (!plan.isChunked) {
     if (ckpt.parts.length === 0) {
-      const result = await rotate.runStage(ckpt, plan.singlePrompt, { onStatus });
+      const result = await rotate.runStage(ckpt, plan.singlePrompt, { ...stageOptions, onStatus });
       ckpt.parts.push({ index: 1, provider: result.provider, text: result.text });
       checkpointMod.saveCheckpoint(ckpt);
     }
@@ -157,8 +162,9 @@ async function runVideo(args, onStatus) {
     checkpointMod.saveCheckpoint(ckpt);
   } else {
     try {
-      await runChunkedStages(ckpt, plan, args.videoId, args.level, title, onStatus);
+      await runChunkedStages(ckpt, plan, args.videoId, args.level, title, onStatus, stageOptions);
     } catch (err) {
+      if (err.stopped) throw err;
       if (err.adaptiveRechunk) {
         const smallerChars = Math.max(4000, Math.floor(maxMessageChars / 2));
         onStatus(`Every provider rejected the first chunk as too large; adaptively re-chunking with a smaller budget (${maxMessageChars} -> ${smallerChars}) since no parts have completed yet.`);
@@ -168,18 +174,19 @@ async function runVideo(args, onStatus) {
           videoId: args.videoId, transcript: transcriptText, summaryLevel: args.level,
           firstProvider: ckpt.rotationCursor, plan,
         });
-        await runChunkedStages(ckpt, plan, args.videoId, args.level, title, onStatus);
+        await runChunkedStages(ckpt, plan, args.videoId, args.level, title, onStatus, stageOptions);
       } else {
         // Preserve progress and surface a retryable stop, rather than throwing raw - the
         // caller (CLI or server.js) decides how to report/exit.
         throw Object.assign(new Error(`STOPPED (retryable): ${err.message}`), { retryable: true, videoId: args.videoId });
       }
     }
-    await mergeStage(ckpt, args.videoId, args.level, title, onStatus);
+    await mergeStage(ckpt, args.videoId, args.level, title, onStatus, stageOptions);
   }
 
-  fs.mkdirSync(args.out, { recursive: true });
-  const outFile = path.join(args.out, `${args.videoId}.summary.txt`);
+  const outDir = args.out || process.env.YT_SUMMARY_OUT || process.cwd();
+  fs.mkdirSync(outDir, { recursive: true });
+  const outFile = path.join(outDir, `${args.videoId}.summary.txt`);
   fs.writeFileSync(outFile, ckpt.finalResult.text, 'utf8');
   onStatus(`Final summary (via ${ckpt.finalResult.provider}) written to ${outFile}`);
 

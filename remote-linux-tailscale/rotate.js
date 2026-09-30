@@ -29,18 +29,36 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Thrown when the user stops/pauses the video (AbortSignal). Never rotated or retried.
+class StoppedError extends Error {
+  constructor() {
+    super('Stopped at your request.');
+    this.stopped = true;
+  }
+}
+
+function throwIfStopped(signal) {
+  if (signal && signal.aborted) throw new StoppedError();
+}
+
 /**
  * Runs one stage (send `prompt`, get a reply) with full rotation/retry semantics.
  * `checkpoint.rotationCursor` is read for the starting provider and updated in place as
  * rotation proceeds; the caller is responsible for persisting the checkpoint afterward.
  * Returns { text, provider }.
  */
-async function runStage(checkpoint, prompt, { onStatus = () => {} } = {}) {
-  let provider = checkpoint.rotationCursor || ROTATION_ORDER[0];
+async function runStage(checkpoint, prompt, { onStatus = () => {}, signal = null, providers = null } = {}) {
+  // `providers` = the dashboard's enabled providers (in rotation order); default all three.
+  const order = providers && providers.length ? ROTATION_ORDER.filter((p) => providers.includes(p)) : ROTATION_ORDER;
+  const next = (name) => {
+    const idx = order.indexOf(name);
+    return idx < 0 ? order[0] : order[(idx + 1) % order.length];
+  };
+  let provider = order.includes(checkpoint.rotationCursor) ? checkpoint.rotationCursor : next(checkpoint.rotationCursor);
   const attempted = new Set();
   const classifications = []; // definite-rejection classifications seen, across all providers
 
-  while (attempted.size < ROTATION_ORDER.length) {
+  while (attempted.size < order.length) {
     attempted.add(provider);
     let infraAttempts = 0;
     let ambiguousRetried = false;
@@ -50,11 +68,13 @@ async function runStage(checkpoint, prompt, { onStatus = () => {} } = {}) {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
+        throwIfStopped(signal);
         onStatus(`Sending to ${provider}...`);
-        const text = await sendToProvider(provider, prompt);
-        checkpoint.rotationCursor = nextProvider(provider);
+        const text = await sendToProvider(provider, prompt, { signal });
+        checkpoint.rotationCursor = next(provider);
         return { text, provider };
       } catch (err) {
+        if (err instanceof StoppedError || (signal && signal.aborted)) throw new StoppedError();
         if (err instanceof DefiniteRejectionError) {
           classifications.push(err.classification);
           onStatus(`${provider}: definite ${err.classification} rejection - rotating immediately (no cooldown).`);
@@ -86,7 +106,7 @@ async function runStage(checkpoint, prompt, { onStatus = () => {} } = {}) {
         break;
       }
     }
-    provider = nextProvider(provider);
+    provider = next(provider);
   }
 
   throw new AllProvidersFailedError(classifications);
@@ -103,4 +123,4 @@ class AllProvidersFailedError extends Error {
   }
 }
 
-module.exports = { runStage, nextProvider, ROTATION_ORDER, AllProvidersFailedError };
+module.exports = { runStage, nextProvider, ROTATION_ORDER, AllProvidersFailedError, StoppedError };

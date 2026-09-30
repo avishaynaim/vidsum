@@ -6,7 +6,8 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const required = [
-  'start.js', 'server.js', 'index.html', 'launch-chrome.js', 'net-guard.js', 'display.js',
+  'start.js', 'server.js', 'simple.html', 'launch-chrome.js', 'net-guard.js', 'display.js',
+  'dashboard-api.js', 'remote-dashboard.js', 'remote-extras.js',
   'cli.js', 'cdp.js', 'checkpoint.js', 'chunk.js', 'providers.json',
   'rejections.js', 'rotate.js', 'send.js', 'transcript.js',
   'setup.sh', 'yt-summary.service.example', 'yt-summary.user.service.example', 'AI-INSTRUCTIONS.md', 'README.md',
@@ -98,7 +99,7 @@ async function testDashboard() {
 
     const dashboard = await fetch(`http://127.0.0.1:${port}/?token=bundle-test-token`);
     assert.strictEqual(dashboard.status, 200);
-    assert.match(await dashboard.text(), /YT Summary Remote/);
+    assert.match(await dashboard.text(), /<span>remote server<\/span>/);
     const cookie = dashboard.headers.get('set-cookie');
     assert.match(cookie, /^ytsum_token=bundle-test-token;.*HttpOnly/);
 
@@ -143,39 +144,47 @@ async function testVncProxy() {
 
 // IP change: refused while a summary runs; otherwise holds queued jobs until it finishes.
 async function testIpRotation() {
-  const { JobQueue, IpRotation } = require('../server');
-  let releaseJob;
+  const os = require('os');
+  const crypto = require('crypto');
+  const { JobStore, Scheduler } = require('../dashboard-api');
+  const { IpRotation } = require('../server');
+  const releases = {};
   const ran = [];
-  const queue = new JobQueue(async (args) => {
+  const runner = (args) => new Promise((resolve) => {
     ran.push(args.videoId);
-    if (args.videoId === 'AAAAAAAAAAA') await new Promise((r) => { releaseJob = r; });
-    return { text: 'x', provider: 'ChatGPT' };
+    releases[args.videoId] = () => resolve({ text: 'x', provider: 'ChatGPT' });
   });
+  const store = new JobStore(fs.mkdtempSync(path.join(os.tmpdir(), 'yt-ip-test-')));
+  const queue = new Scheduler({ store, runner, fetchTitle: async () => '' });
   let releaseRotation;
   const rotation = new IpRotation({ queue, runner: () => new Promise((r) => { releaseRotation = r; }) });
+  const tick = () => new Promise((r) => setImmediate(r));
 
-  queue.enqueue({ videoId: 'AAAAAAAAAAA' });
+  queue.enqueue({ videoId: 'AAAAAAAAAAA', requestId: crypto.randomUUID() });
+  await tick();
   assert.throws(() => rotation.start(), (err) => err.status === 409);
-  releaseJob();
-  await new Promise((r) => setImmediate(r));
+  releases.AAAAAAAAAAA();
+  await tick(); await tick();
 
   const done = rotation.start();
   assert.strictEqual(rotation.state, 'rotating');
   assert.throws(() => rotation.start(), (err) => err.status === 409);
-  queue.enqueue({ videoId: 'BBBBBBBBBBB' });
-  await new Promise((r) => setImmediate(r));
+  queue.enqueue({ videoId: 'BBBBBBBBBBB', requestId: crypto.randomUUID() });
+  await tick();
   assert.deepStrictEqual(ran, ['AAAAAAAAAAA'], 'queued job must wait while the IP is changing');
 
   releaseRotation({ changed: true, before: '1.1.1.1', after: '2.2.2.2' });
   await done;
-  await new Promise((r) => setImmediate(r));
+  await tick();
   assert.strictEqual(rotation.state, 'done');
   assert.deepStrictEqual(ran, ['AAAAAAAAAAA', 'BBBBBBBBBBB']);
+  releases.BBBBBBBBBBB();
 }
 
 testDashboard()
   .then(testVncProxy)
   .then(testIpRotation)
+  .then(require('./test-dashboard-api'))
   .then(() => console.log(`${required.length + 54} bundle checks passed`))
   .catch((error) => {
     console.error(error.stack || error.message);

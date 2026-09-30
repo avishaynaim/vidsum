@@ -22,8 +22,11 @@
 //   processes themselves listen on 127.0.0.1 only.
 //
 // Endpoints:
-//   GET  /                                                    -> dashboard (index.html)
-//   POST /run   { videoId, level?, firstProvider?, clear? }  -> { jobId }
+//   GET  /                                                    -> the Windows dashboard (../index.html + ../app.js,
+//                                                                see remote-dashboard.js), or the login form
+//   GET/POST /api/*                                           -> its API (dashboard-api.js), X-YT-Token header
+//   GET  /simple                                              -> the minimal one-video page (simple.html)
+//   POST /run   { videoId, level?, clear? }                   -> { jobId }   (same job queue as /api)
 //   GET  /status?jobId=...                                    -> { state, log[], result? }
 //   GET  /jobs                                                -> { jobs: [...] } newest first
 //   GET  /health                                              -> { ok: true }
@@ -34,8 +37,8 @@
 //   GET  /ip                                                  -> rotation state + public IP
 //   POST /ip/rotate                                           -> reconnect router for a new IP
 //
-// Jobs run ONE AT A TIME (a simple FIFO queue) - this avoids two jobs fighting over the
-// single launched Chrome. An IP rotation holds the queue so no job starts mid-reconnect.
+// Jobs run ONE AT A TIME (dashboard-api.js's Scheduler) - this avoids two jobs fighting over
+// the single launched Chrome. An IP rotation holds the queue so no job starts mid-reconnect.
 
 const http = require('http');
 const net = require('net');
@@ -45,11 +48,13 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { URL } = require('url');
 
+const os = require('os');
 const { runVideo } = require('./cli');
 const netGuard = require('./net-guard');
+const { JobStore, Scheduler, handleApi } = require('./dashboard-api');
+const { buildDashboard } = require('./remote-dashboard');
 
 const COOKIE_NAME = 'ytsum_token';
-const MAX_JOBS_KEPT = 50;
 
 function parseArgs(argv) {
   const args = {
@@ -68,86 +73,6 @@ function parseArgs(argv) {
 
 function log(...parts) {
   console.log(new Date().toISOString(), ...parts);
-}
-
-// In-memory job registry: { id, state: 'queued'|'running'|'done'|'error', log: [], result, error }.
-// Intentionally not persisted separately - cli.js's own checkpoint.js already durably persists
-// actual pipeline progress per video, so a server restart loses only the in-memory job/log
-// listing, never the underlying resumable summary progress.
-class JobQueue {
-  constructor(runner = runVideo) {
-    this.runner = runner;
-    this.jobs = new Map();
-    this.queue = [];
-    this.busy = false;
-    this.held = false;
-  }
-
-  enqueue({ videoId, level, firstProvider, clear }) {
-    const id = crypto.randomUUID();
-    const job = {
-      id, videoId, level, firstProvider, clear,
-      state: 'queued', log: [], result: null, error: null, createdAt: new Date().toISOString(),
-    };
-    this.jobs.set(id, job);
-    this.queue.push(job);
-    this._trim();
-    this._pump();
-    return job;
-  }
-
-  get(id) {
-    return this.jobs.get(id) || null;
-  }
-
-  list() {
-    return [...this.jobs.values()].reverse().map((job) => ({
-      id: job.id, videoId: job.videoId, level: job.level, state: job.state,
-      createdAt: job.createdAt, lastLog: job.log[job.log.length - 1] || null, error: job.error,
-    }));
-  }
-
-  // While held, queued jobs wait; the running job (if any) is unaffected.
-  setHeld(held) {
-    this.held = held;
-    if (!held) this._pump();
-  }
-
-  // Drops the oldest finished jobs so the in-memory listing cannot grow without bound.
-  _trim() {
-    for (const [id, job] of this.jobs) {
-      if (this.jobs.size <= MAX_JOBS_KEPT) break;
-      if (job.state === 'done' || job.state === 'error') this.jobs.delete(id);
-    }
-  }
-
-  async _pump() {
-    if (this.busy || this.held) return; // one job at a time - see module comment
-    const job = this.queue.shift();
-    if (!job) return;
-    this.busy = true;
-    job.state = 'running';
-    const onStatus = (msg) => { job.log.push(msg); log(`[${job.videoId}]`, msg); };
-    try {
-      const args = {
-        videoId: job.videoId,
-        level: job.level || 'legacy',
-        firstProvider: job.firstProvider || null,
-        out: job.out || process.env.YT_SUMMARY_OUT || process.cwd(),
-        clear: !!job.clear,
-        maxMessageChars: job.maxMessageChars || 22000,
-      };
-      const result = await this.runner(args, onStatus);
-      job.result = result;
-      job.state = 'done';
-    } catch (err) {
-      job.error = err.message;
-      job.state = 'error';
-    } finally {
-      this.busy = false;
-      this._pump(); // process next queued job, if any
-    }
-  }
 }
 
 // Runs ~/apps/router-ip-rotator (or $ROUTER_ROTATOR_DIR) to reconnect the LTE router and get
@@ -251,6 +176,8 @@ const SIGNED_IN_CHECK = `(() => {
 async function signInStatus() {
   const cdp = require('./cdp');
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'providers.json'), 'utf8'));
+  // A tab that is not open yet says nothing about the login; open it (jobs need it anyway).
+  if ((await openSignInTabs()).length) await new Promise((r) => setTimeout(r, 4000));
   const targets = await cdp.listTargets();
   const status = {};
   for (const name of config.rotationOrder) {
@@ -281,10 +208,10 @@ function sendJson(res, status, body, extraHeaders = {}) {
   res.end(payload);
 }
 
-function sendDashboard(res, extraHeaders = {}) {
-  const payload = fs.readFileSync(path.join(__dirname, 'index.html'));
+function sendPage(res, content, type = 'text/html; charset=utf-8', extraHeaders = {}) {
+  const payload = Buffer.isBuffer(content) ? content : Buffer.from(content);
   res.writeHead(200, {
-    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Type': type,
     'Content-Length': payload.length,
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
@@ -307,13 +234,19 @@ button{background:#2563eb;color:white;border:0;font-weight:700}.error{color:#fca
 <label for="token">Access key</label>
 <input id="token" name="token" type="password" required autocomplete="current-password" autofocus>
 ${failed ? '<p class="error">Wrong key, try again.</p>' : ''}
-<button>Enter</button></form></body></html>`);
+<button>Enter</button></form>
+<script>
+// A bookmark link carries the key after '#'; log in with it and reopen the same link.
+const key = new URLSearchParams(location.hash.slice(1)).get('token');
+if (key) fetch('/login', {method: 'POST', body: new URLSearchParams({token: key}), redirect: 'manual'})
+  .then(() => location.reload());
+</script></body></html>`);
   res.writeHead(failed ? 401 : 200, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': payload.length,
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
-    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",
   });
   res.end(payload);
 }
@@ -351,6 +284,16 @@ function readCookie(req, name) {
   return null;
 }
 
+// The Windows dashboard's app.js only accepts a 64-hex-character key, while people type the
+// short access key. The server derives a fixed 64-hex dashboard key from it and accepts both.
+function dashboardToken(token) {
+  return token ? crypto.createHash('sha256').update(`yt-summary-dashboard:${token}`).digest('hex') : null;
+}
+
+function keyMatches(token, candidate) {
+  return !!candidate && (tokenMatches(token, candidate) || tokenMatches(dashboardToken(token), candidate));
+}
+
 // Returns null when the request may proceed, else { status, error }.
 function checkAccess(req, url, token) {
   const remoteAddress = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
@@ -360,11 +303,12 @@ function checkAccess(req, url, token) {
   if (!token) return null;
   const authHeader = req.headers['authorization'];
   const candidates = [
+    req.headers['x-yt-token'] || null, // the Windows dashboard's app.js
     authHeader ? authHeader.replace(/^Bearer\s+/i, '') : null,
     url.searchParams.get('token'),
     readCookie(req, COOKIE_NAME),
   ];
-  if (candidates.some((c) => c && tokenMatches(token, c))) return null;
+  if (candidates.some((c) => keyMatches(token, c))) return null;
   return { status: 401, error: 'Missing or invalid token.' };
 }
 
@@ -402,9 +346,21 @@ function proxyVncUpgrade(req, socket, head, url, vncPort) {
   socket.on('error', close);
 }
 
-function createServer({ token, runner, vncPort = null, rotatorRunner = null, openTabs = openSignInTabs, publicIp = fetchPublicIp, loginStatus = signInStatus } = {}) {
-  const queue = new JobQueue(runner);
-  const rotation = new IpRotation({ runner: rotatorRunner, queue });
+// The job state the old minimal page (/simple, /run, /status, /jobs) understands.
+function simpleState(job) {
+  if (job.State === 'completed') return 'done';
+  if (['error', 'cancelled', 'needs-review', 'reviewed'].includes(job.State)) return 'error';
+  return job.State === 'queued' ? 'queued' : 'running';
+}
+
+function createServer({
+  token, runner = runVideo, vncPort = null, rotatorRunner = null, openTabs = openSignInTabs, publicIp = fetchPublicIp,
+  loginStatus = signInStatus, stateDir = null, attachRunner = null, browserReady = async () => true,
+} = {}) {
+  // Jobs, results and settings persist in stateDir; tests get a throwaway directory.
+  const store = new JobStore(stateDir || fs.mkdtempSync(path.join(os.tmpdir(), 'yt-summary-state-')));
+  const scheduler = new Scheduler({ store, runner, attachRunner, browserReady, log: (msg) => log(msg) });
+  const rotation = new IpRotation({ runner: rotatorRunner, queue: scheduler });
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -414,14 +370,26 @@ function createServer({ token, runner, vncPort = null, rotatorRunner = null, ope
         const remoteAddress = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
         if (!netGuard.isAllowedAddress(remoteAddress)) { sendJson(res, 403, { error: 'Forbidden.' }); return; }
         const supplied = (new URLSearchParams(await readBody(req, 4096)).get('token') || '').trim();
-        if (!tokenMatches(token, supplied)) { sendLogin(res, true); return; }
+        if (!keyMatches(token, supplied)) { sendLogin(res, true); return; }
         res.writeHead(303, { Location: '/', 'Set-Cookie': sessionCookie(supplied), 'Cache-Control': 'no-store' });
         res.end();
         return;
       }
 
+      // The dashboard's code is not secret (the Windows helper serves it openly too); the
+      // page itself, the API and everything else need the key.
+      if (req.method === 'GET' && (url.pathname === '/app.js' || url.pathname === '/remote-extras.js')) {
+        const remoteAddress = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+        if (!netGuard.isAllowedAddress(remoteAddress)) { sendJson(res, 403, { error: 'Forbidden.' }); return; }
+        const body = url.pathname === '/app.js'
+          ? buildDashboard().script
+          : fs.readFileSync(path.join(__dirname, 'remote-extras.js'));
+        sendPage(res, body, 'application/javascript; charset=utf-8');
+        return;
+      }
+
       const denied = checkAccess(req, url, token);
-      if (denied && denied.status === 401 && url.pathname === '/' && req.method === 'GET') {
+      if (denied && denied.status === 401 && ['/', '/simple'].includes(url.pathname) && req.method === 'GET') {
         sendLogin(res, url.searchParams.has('token'));
         return;
       }
@@ -430,14 +398,28 @@ function createServer({ token, runner, vncPort = null, rotatorRunner = null, ope
         return;
       }
 
-      if (url.pathname === '/' && req.method === 'GET') {
-        // Opening the dashboard once with ?token= remembers it in an HttpOnly cookie, so the
-        // sign-in screen (plain links/WebSockets, no custom headers) is authorized too.
+      if ((url.pathname === '/' || url.pathname === '/simple') && req.method === 'GET') {
+        // Opening a page once with ?token= remembers it in an HttpOnly cookie, so the sign-in
+        // screen (plain links/WebSockets, no custom headers) is authorized too.
         const supplied = url.searchParams.get('token');
-        const headers = supplied && token
-          ? { 'Set-Cookie': sessionCookie(supplied) }
-          : {};
-        sendDashboard(res, headers);
+        const headers = supplied && token ? { 'Set-Cookie': sessionCookie(supplied) } : {};
+        const page = url.pathname === '/'
+          ? buildDashboard({ seedToken: dashboardToken(token) }).html
+          : fs.readFileSync(path.join(__dirname, 'simple.html'));
+        sendPage(res, page, 'text/html; charset=utf-8', headers);
+        return;
+      }
+
+      if (url.pathname.startsWith('/api/')) {
+        let body = null;
+        if (req.method === 'POST') {
+          try { body = JSON.parse((await readBody(req)) || '{}'); } catch { sendJson(res, 400, { error: 'Invalid JSON.' }); return; }
+        }
+        try {
+          sendJson(res, 200, await handleApi(scheduler, req.method, url.pathname, body));
+        } catch (err) {
+          sendJson(res, err.status || 500, { error: err.message });
+        }
         return;
       }
 
@@ -459,21 +441,37 @@ function createServer({ token, runner, vncPort = null, rotatorRunner = null, ope
           sendJson(res, 400, { error: 'JSON body with a "videoId" field is required.' });
           return;
         }
-        const job = queue.enqueue(parsed);
-        sendJson(res, 202, { jobId: job.id, state: job.state });
+        try {
+          const job = scheduler.enqueue({
+            videoId: parsed.videoId, requestId: crypto.randomUUID(),
+            ...(parsed.level ? { summaryLevel: parsed.level } : {}),
+          });
+          if (parsed.clear && !scheduler.busy) scheduler.clearProgress(job.Id);
+          else if (['error', 'cancelled'].includes(job.State)) scheduler.retry(job.Id);
+          sendJson(res, 202, { jobId: job.Id, state: simpleState(job) });
+        } catch (err) {
+          sendJson(res, err.status || 500, { error: err.message });
+        }
         return;
       }
 
       if (url.pathname === '/status' && req.method === 'GET') {
-        const jobId = url.searchParams.get('jobId');
-        const job = jobId && queue.get(jobId);
+        const job = store.get(url.searchParams.get('jobId') || '');
         if (!job) { sendJson(res, 404, { error: 'Unknown jobId.' }); return; }
-        sendJson(res, 200, { id: job.id, videoId: job.videoId, state: job.state, log: job.log, result: job.result, error: job.error });
+        const state = simpleState(job);
+        const result = state === 'done' ? { text: store.getResult(job), provider: job.ProviderName } : null;
+        sendJson(res, 200, {
+          id: job.Id, videoId: job.VideoId, state, log: [job.Message], result, error: state === 'error' ? job.Message : null,
+        });
         return;
       }
 
       if (url.pathname === '/jobs' && req.method === 'GET') {
-        sendJson(res, 200, { jobs: queue.list(), held: queue.held });
+        const jobs = [...store.jobs].reverse().map((job) => ({
+          id: job.Id, videoId: job.VideoId, level: job.SummaryLevel, state: simpleState(job),
+          createdAt: job.CreatedAt, lastLog: job.Message, error: simpleState(job) === 'error' ? job.Message : null,
+        }));
+        sendJson(res, 200, { jobs, held: scheduler.held });
         return;
       }
 
@@ -528,7 +526,7 @@ function createServer({ token, runner, vncPort = null, rotatorRunner = null, ope
     proxyVncUpgrade(req, socket, head, url, vncPort);
   });
 
-  return { server, queue, rotation };
+  return { server, scheduler, store, rotation };
 }
 
 function main() {
@@ -541,7 +539,15 @@ function main() {
   const rotatorDir = process.env.ROUTER_ROTATOR_DIR || path.join(require('os').homedir(), 'apps', 'router-ip-rotator');
   const rotatorRunner = fs.existsSync(path.join(rotatorDir, 'router_ip_rotator')) ? defaultRotatorRunner(rotatorDir) : null;
 
-  const { server } = createServer({ token: args.token, vncPort, rotatorRunner });
+  const cdp = require('./cdp');
+  const { readConversation } = require('./send');
+  const stateDir = process.env.YT_SUMMARY_STATE_DIR || path.join(os.homedir(), '.yt-summary-termux', 'dashboard');
+  const { server, scheduler } = createServer({
+    token: args.token, vncPort, rotatorRunner, stateDir,
+    attachRunner: (url) => readConversation(url),
+    browserReady: () => cdp.listTargets().then(() => true, () => false),
+  });
+  scheduler.startTimer();
   const bindAddress = args.bindAll ? '0.0.0.0' : '127.0.0.1';
   server.listen(args.port, bindAddress, () => {
     log(`Listening on ${bindAddress}:${args.port} (bindAll=${args.bindAll}, signIn=${!!vncPort}, ipRotation=${!!rotatorRunner}).`);
@@ -552,4 +558,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { createServer, JobQueue, IpRotation, tokenMatches, checkAccess, readCookie };
+module.exports = { createServer, IpRotation, tokenMatches, checkAccess, readCookie, dashboardToken };

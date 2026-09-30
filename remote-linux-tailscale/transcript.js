@@ -185,7 +185,7 @@ async function fetchTranscriptWithYtDlp(videoId, bin) {
     const lines = parseJson3(fs.readFileSync(path.join(dir, file), 'utf8'));
     const text = lines.join(' ').replace(/\s+/g, ' ').trim();
     if (!text) throw new Error('Caption track produced no text after parsing.');
-    return { text, title: info.title || videoId };
+    return { text, title: info.title || videoId, durationSeconds: Math.round(Number(info.duration) || 0) };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -236,6 +236,7 @@ async function fetchTranscriptDirect(videoId) {
     throw new Error(`Video is not playable/available: ${reason}`);
   }
   const title = player?.videoDetails?.title || videoId;
+  const durationSeconds = Number(player?.videoDetails?.lengthSeconds) || 0;
   const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
   if (!tracks.length) throw new Error('No caption tracks are available for this video.');
   const track = selectTrack(tracks);
@@ -243,7 +244,7 @@ async function fetchTranscriptDirect(videoId) {
   const lines = await readTrack(track);
   const text = lines.join(' ').replace(/\s+/g, ' ').trim();
   if (!text) throw new Error('Caption track produced no text after parsing.');
-  return { text, title };
+  return { text, title, durationSeconds };
 }
 
 module.exports = { fetchTranscript, fetchTranscriptDirect, assertValidVideoId, chooseYtDlpTrack, findYtDlp };
