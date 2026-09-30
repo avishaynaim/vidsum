@@ -29,6 +29,9 @@ const MAX_UNFINISHED = 200;
 const HISTORY_KEEP = 1000;
 const SOURCE_PEEK_INTERVAL_MS = 30 * 60 * 1000; // how often saved lists are checked for new videos
 const SEEN_IDS_KEEP = 1000;
+// The server browser grows with every video and froze once after ~50; restart it this often
+// (and at once when it stops responding). Logins live in the profile and survive.
+const BROWSER_RECYCLE_EVERY = 10;
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
@@ -209,9 +212,13 @@ async function fetchOEmbedTitle(videoId) {
 class Scheduler {
   constructor({ store, runner, fetchTitle = fetchOEmbedTitle, browserReady = async () => true, attachRunner = null, log = () => {},
     listVideos = (url, options) => require('./import-list').listVideos(url, options),
+    recycleBrowser = null,
     loadCheckpoint = (videoId) => require('./checkpoint').loadCheckpoint(videoId) }) {
     this.loadCheckpoint = loadCheckpoint;
     this.listVideos = listVideos;
+    this.recycleBrowser = recycleBrowser;
+    this.videosSinceRecycle = 0;
+    this.recycling = false;
     this.store = store;
     this.runner = runner;
     this.fetchTitle = fetchTitle;
@@ -273,6 +280,7 @@ class Scheduler {
   }
 
   async tick() {
+    if (this.recycling) return; // browserMessage already explains the short pause
     this.ready = await this.browserReady();
     this.browserMessage = this.ready ? '' : 'The server browser is not responding; queued videos wait until it is back.';
     // Due automatic retries go back to the queue.
@@ -513,7 +521,7 @@ class Scheduler {
   }
 
   pump() {
-    if (this.current || this.held || this.paused || !this.ready) return;
+    if (this.current || this.held || this.paused || !this.ready || this.recycling) return;
     const job = this.store.jobs.find((j) => j.State === 'queued' && !j.WatchLater);
     if (job) this.run(job);
   }
@@ -527,6 +535,7 @@ class Scheduler {
     this.store.save(job);
     const clear = !!job.clearRequested;
     delete job.clearRequested;
+    let frozenProviders = 0; // providers that failed only because the browser stopped answering
     try {
       const result = await this.runner({
         videoId: job.VideoId, level: job.SummaryLevel, clear, signal: controller.signal,
@@ -543,6 +552,7 @@ class Scheduler {
           this.store.save(job);
         },
       }, (message) => {
+        if (/transient infrastructure error persisted/.test(message)) frozenProviders++;
         applyStatus(job, message);
         this.store.save(job);
         this.log(`[${job.VideoId}] ${message}`);
@@ -574,7 +584,9 @@ class Scheduler {
         job.Message = 'Stopped at your request. Progress is saved; Retry from checkpoint continues it.';
       } else {
         job.State = 'error';
-        job.Message = err.message;
+        job.Message = frozenProviders >= 2
+          ? 'The server browser stopped responding. It is being restarted; this video retries automatically.'
+          : err.message;
         job.RetryReason = err.message;
         if (err.retryable && job.AutoRetryAttempts < AUTO_RETRY_LIMIT) {
           job.AutoRetryAttempts += 1;
@@ -586,6 +598,30 @@ class Scheduler {
     } finally {
       this.store.save(job);
       this.current = null;
+      this.videosSinceRecycle++;
+      const frozen = job.State === 'error' && frozenProviders >= 2;
+      if (this.recycleBrowser && (frozen || this.videosSinceRecycle >= BROWSER_RECYCLE_EVERY)) {
+        this.restartBrowser(frozen ? 'it stopped responding' : `routine refresh after ${this.videosSinceRecycle} videos`);
+      } else {
+        setImmediate(() => this.pump());
+      }
+    }
+  }
+
+  // Between videos only: restart the server browser, then carry on with the queue.
+  async restartBrowser(reason) {
+    this.recycling = true;
+    this.browserMessage = `Restarting the server browser (${reason}); the queue continues in a moment.`;
+    this.log(`Restarting the server browser: ${reason}.`);
+    try {
+      await this.recycleBrowser();
+      this.videosSinceRecycle = 0;
+      this.log('Server browser restarted.');
+    } catch (err) {
+      this.log(`Server browser restart failed: ${err.message}`);
+    } finally {
+      this.recycling = false;
+      this.browserMessage = '';
       setImmediate(() => this.pump());
     }
   }
@@ -885,6 +921,11 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/details': return scheduler.details(body.jobId);
     case '/api/import': return scheduler.importList(body);
     case '/api/search': return scheduler.search(body);
+    case '/api/browser/restart':
+      if (!scheduler.recycleBrowser) throw new ApiError(501, 'Browser restart is not available on this server.');
+      if (scheduler.current || scheduler.recycling) throw new ApiError(409, 'A video is running (or a restart is underway). Try again when it finishes.');
+      await scheduler.restartBrowser('requested from the dashboard');
+      return { restarted: true };
     case '/api/sources/run': return scheduler.runSource(body.id, { labelOnly: body.labelOnly === true });
     case '/api/sources/run-all': return scheduler.runAllSources();
     case '/api/sources/peek': return body.id ? scheduler.peekSource(body.id) : scheduler.peekAllSources();

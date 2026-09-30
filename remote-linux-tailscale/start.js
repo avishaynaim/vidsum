@@ -90,6 +90,7 @@ async function main() {
   // The token travels by environment, not argv, so other local users cannot read it via ps.
   const serverArgs = ['server.js', '--port', String(args.apiPort)];
   if (args.bindAll) serverArgs.push('--bind-all');
+  // The 'ipc' channel lets the server ask for a browser restart (see restartBrowser below).
   const server = spawn(process.execPath, serverArgs, {
     cwd: __dirname,
     env: {
@@ -99,10 +100,38 @@ async function main() {
       CDP_PORT: String(chrome.port),
       ...(screen ? { VNC_WEB_PORT: String(screen.webPort) } : {}),
     },
-    stdio: 'inherit',
+    stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
   });
 
   let stopping = false;
+  let restarting = false;
+
+  // Closes the browser and opens a fresh one on the same profile (logins are kept) and the
+  // same virtual screen; used by the server every few videos and when the browser freezes.
+  async function restartBrowser() {
+    restarting = true;
+    try {
+      const old = chrome.proc;
+      const exited = new Promise((resolve) => { if (old.exitCode !== null) resolve(); else old.once('exit', resolve); });
+      old.kill('SIGTERM');
+      const killTimer = setTimeout(() => { if (old.exitCode === null) old.kill('SIGKILL'); }, 10000);
+      await exited;
+      clearTimeout(killTimer);
+      await new Promise((r) => setTimeout(r, 1000)); // let the profile lock go
+      chrome = await launchChrome(chromeOptions);
+      watchChrome();
+      console.log(`Browser restarted; CDP ready on 127.0.0.1:${chrome.port}.`);
+      return chrome.port;
+    } finally {
+      restarting = false;
+    }
+  }
+  server.on('message', (message) => {
+    if (!message || message.type !== 'restart-browser') return;
+    restartBrowser().then(
+      (port) => server.connected && server.send({ type: 'browser-restarted', id: message.id, port }),
+      (error) => server.connected && server.send({ type: 'browser-restart-failed', id: message.id, error: error.message }));
+  });
   function stop(signal) {
     if (stopping) return;
     stopping = true;
@@ -119,12 +148,16 @@ async function main() {
     process.exitCode = code === null ? 1 : code;
     if (!stopping) console.error(`Server exited unexpectedly (${signal || code}).`);
   });
-  chrome.proc.on('exit', (code, signal) => {
-    if (!stopping) {
-      console.error(`Chrome exited unexpectedly (${signal || code}).`);
-      if (!server.killed) server.kill('SIGTERM');
-    }
-  });
+  function watchChrome() {
+    const proc = chrome.proc;
+    proc.on('exit', (code, signal) => {
+      if (!stopping && !restarting && proc === chrome.proc) {
+        console.error(`Chrome exited unexpectedly (${signal || code}).`);
+        if (!server.killed) server.kill('SIGTERM');
+      }
+    });
+  }
+  watchChrome();
 }
 
 if (require.main === module) {

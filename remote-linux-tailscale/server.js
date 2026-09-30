@@ -355,11 +355,11 @@ function simpleState(job) {
 
 function createServer({
   token, runner = runVideo, vncPort = null, rotatorRunner = null, openTabs = openSignInTabs, publicIp = fetchPublicIp,
-  loginStatus = signInStatus, stateDir = null, attachRunner = null, browserReady = async () => true,
+  loginStatus = signInStatus, stateDir = null, attachRunner = null, browserReady = async () => true, recycleBrowser = null,
 } = {}) {
   // Jobs, results and settings persist in stateDir; tests get a throwaway directory.
   const store = new JobStore(stateDir || fs.mkdtempSync(path.join(os.tmpdir(), 'yt-summary-state-')));
-  const scheduler = new Scheduler({ store, runner, attachRunner, browserReady, log: (msg) => log(msg) });
+  const scheduler = new Scheduler({ store, runner, attachRunner, browserReady, recycleBrowser, log: (msg) => log(msg) });
   const rotation = new IpRotation({ runner: rotatorRunner, queue: scheduler });
 
   const server = http.createServer(async (req, res) => {
@@ -528,6 +528,27 @@ function createServer({
   return { server, scheduler, store, rotation };
 }
 
+// Asks start.js (over the IPC channel) to restart the browser; resolves with its new CDP port.
+let browserRestartSeq = 0;
+function requestBrowserRestart(timeoutMs = 120000) {
+  if (!process.send) return Promise.reject(new Error('Browser restart is only available when started by start.js.'));
+  const id = ++browserRestartSeq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { process.off('message', onMessage); reject(new Error('Browser restart timed out.')); }, timeoutMs);
+    function onMessage(message) {
+      if (!message || message.id !== id) return;
+      clearTimeout(timer);
+      process.off('message', onMessage);
+      if (message.type === 'browser-restarted') {
+        process.env.CDP_PORT = String(message.port);
+        resolve(message.port);
+      } else reject(new Error(message.error || 'Browser restart failed.'));
+    }
+    process.on('message', onMessage);
+    process.send({ type: 'restart-browser', id });
+  });
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.token) {
@@ -545,6 +566,7 @@ function main() {
     token: args.token, vncPort, rotatorRunner, stateDir,
     attachRunner: (url) => readConversation(url),
     browserReady: () => cdp.listTargets().then(() => true, () => false),
+    recycleBrowser: process.send ? () => requestBrowserRestart() : null,
   });
   scheduler.startTimer();
   const bindAddress = args.bindAll ? '0.0.0.0' : '127.0.0.1';

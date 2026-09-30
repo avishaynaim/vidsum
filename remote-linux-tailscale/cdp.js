@@ -4,23 +4,23 @@
 // Node's built-in global `fetch` and `WebSocket` (Node 22+; Node 18-21 need --experimental
 // or the `ws`/`node-fetch` packages substituted here).
 
-const CDP_HOST = process.env.CDP_HOST || '127.0.0.1';
-const CDP_PORT = process.env.CDP_PORT || '9222';
+// Read on every call: the server restarts its browser now and then, which changes the port.
+const cdpBase = () => `http://${process.env.CDP_HOST || '127.0.0.1'}:${process.env.CDP_PORT || '9222'}`;
 
 async function listTargets() {
-  const res = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json`);
+  const res = await fetch(`${cdpBase()}/json`);
   if (!res.ok) throw new Error(`CDP /json HTTP ${res.status}`);
   return res.json();
 }
 
 async function newTab(url) {
-  const res = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' });
+  const res = await fetch(`${cdpBase()}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' });
   if (!res.ok) throw new Error(`Target.createTarget failed: CDP /json/new HTTP ${res.status}`);
   return res.json();
 }
 
 async function closeTab(targetId) {
-  const res = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/close/${targetId}`);
+  const res = await fetch(`${cdpBase()}/json/close/${targetId}`);
   return res.ok;
 }
 

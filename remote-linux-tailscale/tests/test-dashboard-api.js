@@ -18,7 +18,9 @@ const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'yt-dash-test-'));
 // A runner whose videos finish only when the test says so.
 function controllableRunner() {
   const pending = new Map();
+  const statuses = new Map();
   const runner = (args, onStatus) => new Promise((resolve, reject) => {
+    statuses.set(args.videoId, onStatus);
     onStatus('Fetching transcript...');
     onStatus('Transcript fetched (1234 chars).');
     onStatus('Chunk part 1/2: starting.');
@@ -27,7 +29,7 @@ function controllableRunner() {
     pending.set(args.videoId, { resolve, reject, args });
     args.signal.addEventListener('abort', () => reject(Object.assign(new Error('Stopped at your request.'), { stopped: true })));
   });
-  return { runner, pending };
+  return { runner, pending, statusOf: (videoId) => statuses.get(videoId) };
 }
 
 function makeScheduler(dir = tmpDir(), runner = controllableRunner().runner) {
@@ -450,6 +452,47 @@ async function testSearch() {
   await assert.rejects(handleApi(scheduler, 'POST', '/api/search', { query: 'a' }), (e) => e.status === 400);
 }
 
+async function testBrowserRecycling() {
+  const fake = controllableRunner();
+  const store = new JobStore(tmpDir());
+  let recycles = 0;
+  let finishRecycle;
+  const scheduler = new Scheduler({
+    store, runner: fake.runner, fetchTitle: async () => '',
+    recycleBrowser: () => { recycles++; return new Promise((r) => { finishRecycle = r; }); },
+  });
+  const ids = Array.from({ length: 12 }, (_, i) => `R${String(i).padStart(2, '0')}xxxxxxxx`);
+  for (const id of ids) await add(scheduler, id);
+  for (let i = 0; i < 9; i++) {
+    await tick();
+    fake.pending.get(ids[i]).resolve({ text: 'x', provider: 'Claude' });
+    await tick(); await tick();
+  }
+  assert.strictEqual(recycles, 0, 'no restart before 10 videos');
+  await tick();
+  fake.pending.get(ids[9]).resolve({ text: 'x', provider: 'Claude' });
+  await tick(); await tick();
+  assert.strictEqual(recycles, 1, 'the browser restarts after 10 videos');
+  assert.strictEqual(store.jobs.find((j) => j.VideoId === ids[10]).State, 'queued', 'the next video waits for the restart');
+  assert.match(scheduler.status().browserMessage, /Restarting the server browser/);
+  finishRecycle();
+  await tick(); await tick();
+  assert.strictEqual(store.jobs.find((j) => j.VideoId === ids[10]).State, 'gemini', 'the queue continues after the restart');
+
+  // A freeze (every provider failed with infrastructure errors) restarts it at once.
+  const job = store.jobs.find((j) => j.VideoId === ids[10]);
+  // Replay what rotate.js reports when the browser stops answering, then the retryable stop.
+  const onStatusLines = ['ChatGPT', 'Gemini', 'Claude'].map((p) => `${p}: transient infrastructure error persisted after 3 attempts; rotating.`);
+  onStatusLines.forEach((line) => fake.statusOf(ids[10])(line));
+  fake.pending.get(ids[10]).reject(Object.assign(new Error('STOPPED (retryable): Chunk part 1 failed on every provider'), { retryable: true }));
+  await tick(); await tick();
+  assert.strictEqual(recycles, 2, 'a frozen browser is restarted right away');
+  assert.match(job.Message, /stopped responding/);
+  assert.ok(job.AutoRetryAfterUtc, 'the frozen video retries automatically');
+  finishRecycle();
+  await tick();
+}
+
 module.exports = async function run() {
   await testLifecycle();
   await testFailuresAndRetries();
@@ -460,6 +503,7 @@ module.exports = async function run() {
   await testImportList();
   await testNewVideoCounts();
   await testSearch();
+  await testBrowserRecycling();
 };
 
 if (require.main === module) {
