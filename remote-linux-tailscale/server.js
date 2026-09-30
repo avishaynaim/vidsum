@@ -145,60 +145,64 @@ async function fetchPublicIp(timeoutMs = 5000) {
 
 // Opens one tab per provider in the server's Chrome (skipping ones already open) so the user
 // can sign in through the /vnc/ view.
-async function openSignInTabs() {
+// The login check and the sign-in screen use their OWN tab per provider, tracked by id.
+// Videos open a separate tab for every stage (send.js), and those must never be touched here:
+// matching tabs by site name let this check grab a video's working tab and, when it was busy
+// loading, close it mid-stage.
+const loginTabIds = new Map(); // provider name -> CDP target id
+let loginTabsBusy = Promise.resolve();
+
+async function ensureLoginTabs() {
   const cdp = require('./cdp');
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'providers.json'), 'utf8'));
-  const targets = await cdp.listTargets();
+  const alive = new Set((await cdp.listTargets()).map((t) => t.id));
   const opened = [];
   for (const name of config.rotationOrder) {
-    const url = config.providers[name].url;
-    const host = new URL(url).host;
-    if (!targets.some((t) => t.type === 'page' && cdp.hostOf(t.url) === host)) {
-      await cdp.newTab(url);
-      opened.push(name);
-    }
+    if (loginTabIds.has(name) && alive.has(loginTabIds.get(name))) continue;
+    const tab = await cdp.newTab(config.providers[name].url);
+    loginTabIds.set(name, tab.id);
+    opened.push(name);
   }
-  return opened;
+  return { config, opened };
 }
 
-// Runs inside each provider page: 'signed-out' when it shows a login page or a
-// "Log in"/"Sign in" button (the same for ChatGPT, Gemini and Claude), else 'signed-in'.
-const SIGNED_IN_CHECK = `(() => {
-  if (document.readyState !== 'complete') return 'loading';
-  if (/^\\/(login|auth|signin)/i.test(location.pathname)) return 'signed-out';
-  const labels = [...document.querySelectorAll('a,button')]
-    .filter((el) => el.offsetParent !== null)
-    .map((el) => el.innerText.trim().toLowerCase());
-  return labels.some((t) => t === 'log in' || t === 'sign in' || t === 'sign up') ? 'signed-out' : 'signed-in';
-})()`;
+// Serialized: several open dashboards poll this, and each run may open tabs.
+function withLoginTabs(fn) {
+  const run = loginTabsBusy.then(fn, fn);
+  loginTabsBusy = run.catch(() => {});
+  return run;
+}
 
-// Reports each provider's login state from its open tab in the server's Chrome.
+async function openSignInTabs() {
+  return withLoginTabs(async () => (await ensureLoginTabs()).opened);
+}
+
 async function signInStatus() {
-  const cdp = require('./cdp');
-  const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'providers.json'), 'utf8'));
-  // A tab that is not open yet says nothing about the login; open it (jobs need it anyway).
-  if ((await openSignInTabs()).length) await new Promise((r) => setTimeout(r, 4000));
-  const targets = await cdp.listTargets();
-  const status = {};
-  for (const name of config.rotationOrder) {
-    const host = new URL(config.providers[name].url).host;
-    const target = targets.find((t) => t.type === 'page' && cdp.hostOf(t.url) === host);
-    if (!target) { status[name] = 'no-tab'; continue; }
-    let ws;
-    try {
-      ws = await cdp.connect(target.webSocketDebuggerUrl);
-      const result = await cdp.sendCommand(ws, 'Runtime.evaluate', { expression: SIGNED_IN_CHECK, returnByValue: true }, 6000);
-      status[name] = result.result ? result.result.value : 'unknown';
-    } catch {
-      // A crashed or hung tab: replace it with a fresh one instead of reporting it forever.
-      await cdp.closeTab(target.id).catch(() => {});
-      await cdp.newTab(config.providers[name].url).catch(() => {});
-      status[name] = 'loading';
-    } finally {
-      if (ws) ws.close();
+  return withLoginTabs(async () => {
+    const cdp = require('./cdp');
+    const { config, opened } = await ensureLoginTabs();
+    if (opened.length) await new Promise((r) => setTimeout(r, 4000)); // let new tabs load
+    const targets = await cdp.listTargets();
+    const status = {};
+    for (const name of config.rotationOrder) {
+      const target = targets.find((t) => t.id === loginTabIds.get(name));
+      if (!target) { status[name] = 'no-tab'; continue; }
+      let ws;
+      try {
+        ws = await cdp.connect(target.webSocketDebuggerUrl);
+        const result = await cdp.sendCommand(ws, 'Runtime.evaluate', { expression: SIGNED_IN_CHECK, returnByValue: true }, 6000);
+        status[name] = result.result ? result.result.value : 'unknown';
+      } catch {
+        // Our own login tab crashed or hung: replace it (never a video's tab).
+        await cdp.closeTab(target.id).catch(() => {});
+        loginTabIds.delete(name);
+        status[name] = 'loading';
+      } finally {
+        if (ws) ws.close();
+      }
     }
-  }
-  return status;
+    return status;
+  });
 }
 
 function sendJson(res, status, body, extraHeaders = {}) {
