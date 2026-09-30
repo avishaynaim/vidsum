@@ -123,10 +123,67 @@
   const viewerTitle = el('h2', { dir: 'auto' });
   const viewerMeta = el('p', { className: 'muted' });
   const viewerBody = el('div', { className: 'viewer-body' });
+  // Always-visible position rail (phones hide normal scroll bars): the thumb shows where you
+  // are, its label names the section and percentage; drag it or tap the rail to move.
+  const railLabel = el('span', { className: 'viewer-rail-label' });
+  const railThumb = el('div', { className: 'viewer-rail-thumb' });
+  const rail = el('div', { className: 'viewer-rail', hidden: true, ariaHidden: 'true' }, railThumb);
+  const viewerScroll = el('div', { className: 'viewer-scroll' }, viewerBody, rail, railLabel);
   const closeViewer = el('button', { className: 'viewer-close', type: 'button', ariaLabel: 'Close' }, '✕');
   closeViewer.addEventListener('click', () => viewer.close());
   viewer.addEventListener('click', (event) => { if (event.target === viewer) viewer.close(); }); // backdrop
-  viewer.append(el('div', { className: 'viewer-head' }, el('div', {}, viewerTitle, viewerMeta), closeViewer), viewerBody);
+  viewer.append(el('div', { className: 'viewer-head' }, el('div', {}, viewerTitle, viewerMeta), closeViewer), viewerScroll);
+
+  let labelTimer;
+  function updateRail() {
+    const { scrollTop, scrollHeight, clientHeight } = viewerBody;
+    const scrollable = scrollHeight - clientHeight;
+    rail.hidden = scrollable <= 4;
+    if (rail.hidden) { railLabel.hidden = true; return; }
+    const track = rail.clientHeight;
+    const thumb = Math.max(44, Math.round(track * clientHeight / scrollHeight));
+    const top = Math.round((track - thumb) * (scrollTop / scrollable));
+    railThumb.style.height = `${thumb}px`;
+    railThumb.style.transform = `translateY(${top}px)`;
+    // The section under the top of the view names the location.
+    const viewTop = viewerBody.getBoundingClientRect().top + 12;
+    const sections = [...viewerBody.querySelectorAll('.viewer-section')];
+    const current = sections.filter((section) => section.getBoundingClientRect().top <= viewTop).pop() || sections[0];
+    const name = current ? current.querySelector('summary b')?.textContent : '';
+    const percent = Math.round(100 * scrollTop / scrollable);
+    railLabel.textContent = name ? `${name} · ${percent}%` : `${percent}%`;
+    railLabel.style.top = `${rail.offsetTop + top + thumb / 2}px`;
+    railLabel.hidden = false;
+    railLabel.classList.add('visible');
+    clearTimeout(labelTimer);
+    labelTimer = setTimeout(() => { if (!dragging) railLabel.classList.remove('visible'); }, 1400);
+  }
+  viewerBody.addEventListener('scroll', updateRail, { passive: true });
+  new ResizeObserver(updateRail).observe(viewerBody);
+  new MutationObserver(() => requestAnimationFrame(updateRail)).observe(viewerBody, { childList: true, subtree: true, attributes: true, attributeFilter: ['open'] });
+
+  // Drag the thumb, or press anywhere on the rail to jump there (thumb centered on the finger).
+  let dragging = false;
+  let grabOffset = 0;
+  function scrollToPointer(clientY) {
+    const rect = rail.getBoundingClientRect();
+    const thumb = railThumb.offsetHeight;
+    const ratio = Math.min(1, Math.max(0, (clientY - rect.top - grabOffset) / Math.max(1, rect.height - thumb)));
+    viewerBody.scrollTop = ratio * (viewerBody.scrollHeight - viewerBody.clientHeight);
+  }
+  rail.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    dragging = true;
+    rail.setPointerCapture(event.pointerId);
+    const thumbRect = railThumb.getBoundingClientRect();
+    grabOffset = event.target === railThumb ? event.clientY - thumbRect.top : railThumb.offsetHeight / 2;
+    rail.classList.add('dragging');
+    scrollToPointer(event.clientY);
+  });
+  rail.addEventListener('pointermove', (event) => { if (dragging) scrollToPointer(event.clientY); });
+  const endDrag = () => { dragging = false; rail.classList.remove('dragging'); updateRail(); };
+  rail.addEventListener('pointerup', endDrag);
+  rail.addEventListener('pointercancel', endDrag);
 
   function textBlock(label, entry, open = true) {
     const copy = el('button', { type: 'button' }, 'Copy');
@@ -162,6 +219,8 @@
       if (!blocks.length) blocks.push(el('p', { className: 'muted' }, `No summary yet. ${d.message || ''}`));
       else if (!d.final) blocks.unshift(el('p', { className: 'muted' }, `Still working: ${d.message || ''} Parts finished so far are below.`));
       viewerBody.replaceChildren(...blocks);
+      viewerBody.scrollTop = 0;
+      requestAnimationFrame(updateRail);
     } catch (error) {
       viewerTitle.textContent = 'Could not load this summary';
       viewerBody.replaceChildren(el('p', { className: 'muted' }, error.message));
