@@ -414,6 +414,11 @@ async function testSearch() {
   const { findMatches, buildPassages } = require('../search');
   assert.strictEqual(findMatches('הַלּוּלָב והלולב', 'לולב').length, 2, 'vowel marks are ignored');
   assert.strictEqual(findMatches('The  Lulav\nwas', 'lulav was').length, 1, 'case and whitespace are ignored');
+  const home = 'Home sweet home. Home Alone is a film. At home alone again; home.';
+  assert.strictEqual(findMatches(home, 'home').length, 5);
+  assert.strictEqual(findMatches(home, 'home', ['home alone']).length, 3, '"home" inside "home alone" is left out');
+  assert.strictEqual(findMatches(home, 'home', ['home alone', 'sweet home']).length, 2, 'several "not" phrases');
+  assert.strictEqual(findMatches(home, 'home', ['  ']).length, 5, 'an empty "not" is ignored');
   const words = (n, p) => Array.from({ length: n }, (_, i) => `${p}${i}`).join(' ');
   const text = `אתרוג ${words(40, 'a')} אתרוג ${words(10, 'b')} אתרוג ${words(100, 'c')} אתרוג`;
   const passages = buildPassages(text, findMatches(text, 'אתרוג'), 30);
@@ -449,6 +454,9 @@ async function testSearch() {
   assert.deepStrictEqual(r.results.map((x) => x.videoId), ['BBBBBBBBBBB'], 'only the chosen videos are searched');
   r = await handleApi(scheduler, 'POST', '/api/search', { query: 'אתרוג', jobIds: [a.Id, b.Id] });
   assert.deepStrictEqual(r.results[0].sections.map((x) => x.key), ['part-1'], 'parts are searched too');
+  r = await handleApi(scheduler, 'POST', '/api/search', { query: 'לולב', exclude: ['על הלולב'] });
+  assert.strictEqual(r.matches, 1, 'the API applies "not" phrases (only "עוד לולב כאן" is left)');
+  assert.deepStrictEqual(r.exclude, ['על הלולב']);
   await assert.rejects(handleApi(scheduler, 'POST', '/api/search', { query: 'a' }), (e) => e.status === 400);
 }
 

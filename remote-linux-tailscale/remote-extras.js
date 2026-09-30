@@ -279,6 +279,28 @@
   const contextSelect = el('select', { title: 'Words shown before and after each match' },
     ...[10, 20, 30, 50, 100].map((n) => el('option', { value: String(n), selected: n === 30 }, `${n} words around`)));
   const searchGo = el('button', { type: 'button', className: 'primary' }, 'Search');
+  // "Not" phrases: a match that is part of one of these is left out (home, not "home alone").
+  const excludes = [];
+  const notInput = el('input', { type: 'search', dir: 'auto', placeholder: 'Not… (e.g. home alone)', enterKeyHint: 'done', autocomplete: 'off' });
+  const notAdd = el('button', { type: 'button' }, '+ Not');
+  const notChips = el('span', { className: 'not-chips' });
+  function renderNots() {
+    notChips.replaceChildren(...excludes.map((phrase, i) => {
+      const remove = el('button', { type: 'button', className: 'not-remove', ariaLabel: `Remove ${phrase}` }, '✕');
+      remove.addEventListener('click', () => { excludes.splice(i, 1); renderNots(); if (searchQuery.value.trim().length >= 2) runSearch(); });
+      return el('span', { className: 'not-chip', dir: 'auto' }, `not "${phrase}"`, remove);
+    }));
+  }
+  function addNot() {
+    const phrase = notInput.value.trim();
+    if (!phrase || excludes.includes(phrase)) { notInput.value = ''; return; }
+    excludes.push(phrase);
+    notInput.value = '';
+    renderNots();
+    if (searchQuery.value.trim().length >= 2) runSearch();
+  }
+  notAdd.addEventListener('click', addNot);
+  notInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') addNot(); });
   const scopeSummary = el('span', { className: 'scope-summary' });
   const scopeToggle = el('button', { type: 'button' }, 'Choose videos');
   const scopeList = el('div', { className: 'scope-list' });
@@ -308,6 +330,7 @@
       el('p', { className: 'muted' }, 'Finds the words in every summary and part, ignoring Hebrew vowel marks.')), closeSearch),
     el('div', { className: 'search-body' },
       el('div', { className: 'row search-form' }, searchQuery, contextSelect, searchGo),
+      el('div', { className: 'row search-not' }, notInput, notAdd, notChips),
       el('div', { className: 'row search-scope' }, scopeSummary, scopeToggle),
       scopePicker, searchResults));
 
@@ -387,13 +410,16 @@
     searchGo.disabled = true;
     searchResults.replaceChildren(el('p', { className: 'muted' }, 'Searching…'));
     try {
-      const r = await post('/api/search', { query, contextWords: Number(contextSelect.value), ...(scope ? { jobIds: [...scope] } : {}) });
+      const r = await post('/api/search', {
+        query, exclude: excludes, contextWords: Number(contextSelect.value), ...(scope ? { jobIds: [...scope] } : {}),
+      });
+      const nots = excludes.length ? `, not ${excludes.map((x) => `"${x}"`).join(', ')}` : '';
       if (!r.results.length) {
-        searchResults.replaceChildren(el('p', { className: 'muted' }, `No matches for "${query}" in ${plural(r.searched, 'video')}.`));
+        searchResults.replaceChildren(el('p', { className: 'muted' }, `No matches for "${query}"${nots} in ${plural(r.searched, 'video')}.`));
         return;
       }
       searchResults.replaceChildren(
-        el('p', { className: 'search-count' }, `${plural(r.matches, 'match', 'matches')} in ${plural(r.results.length, 'video')} (searched ${r.searched})`),
+        el('p', { className: 'search-count' }, `${plural(r.matches, 'match', 'matches')} for "${query}"${nots} in ${plural(r.results.length, 'video')} (searched ${r.searched})`),
         ...r.results.map((video) => {
           const title = el('button', { type: 'button', className: 'hit-video-title', dir: 'auto' }, video.title || video.videoId);
           const first = video.sections[0];

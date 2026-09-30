@@ -40,20 +40,35 @@ function normalizeQuery(query) {
   return normalizeWithMap(String(query || '')).norm.trim();
 }
 
-// All [start, end) ranges in the ORIGINAL text where the (normalized) query occurs.
-function findMatches(text, query) {
-  const q = normalizeQuery(query);
-  if (!q) return [];
-  const { norm, map } = normalizeWithMap(text);
+function rangesOf(norm, map, q) {
   const ranges = [];
   let from = 0;
   for (;;) {
     const at = norm.indexOf(q, from);
     if (at < 0) break;
     ranges.push([map[at], map[at + q.length - 1] + 1]);
-    from = at + q.length;
+    from = at + 1;
   }
   return ranges;
+}
+
+// All [start, end) ranges in the ORIGINAL text where the (normalized) query occurs, except
+// those that are part of an occurrence of any "not" phrase: searching "home" with not
+// "home alone" keeps every "home" except the ones inside "home alone".
+function findMatches(text, query, excludes = []) {
+  const q = normalizeQuery(query);
+  if (!q) return [];
+  const { norm, map } = normalizeWithMap(text);
+  const matches = [];
+  for (let from = 0; ;) {
+    const at = norm.indexOf(q, from);
+    if (at < 0) break;
+    matches.push([map[at], map[at + q.length - 1] + 1]);
+    from = at + q.length;
+  }
+  const blocked = excludes.map(normalizeQuery).filter(Boolean).flatMap((x) => rangesOf(norm, map, x));
+  if (!blocked.length) return matches;
+  return matches.filter(([start, end]) => !blocked.some(([bs, be]) => start < be && end > bs));
 }
 
 // Words of the text with their offsets: [{ start, end }].
@@ -110,10 +125,10 @@ function buildPassages(text, ranges, contextWords = DEFAULT_CONTEXT_WORDS) {
 }
 
 // Searches one video's sections ([{ key, label, provider, text }]).
-function searchSections(sections, query, contextWords) {
+function searchSections(sections, query, contextWords, excludes = []) {
   const results = [];
   for (const section of sections) {
-    const ranges = findMatches(section.text || '', query);
+    const ranges = findMatches(section.text || '', query, excludes);
     if (!ranges.length) continue;
     results.push({
       key: section.key, label: section.label, provider: section.provider || '',

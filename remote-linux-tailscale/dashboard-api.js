@@ -838,13 +838,15 @@ class Scheduler {
       }));
   }
 
-  // body: { query, jobIds?: [...] (default: every searchable video), contextWords? }
+  // body: { query, exclude?: ["not" phrases], jobIds?: [...] (default: every searchable video), contextWords? }
   search(body) {
     const { searchSections, normalizeQuery, DEFAULT_CONTEXT_WORDS } = require('./search');
     const query = typeof body.query === 'string' ? body.query : '';
     if (normalizeQuery(query).length < 2) throw new ApiError(400, 'Type at least 2 letters to search.');
     const contextWords = Math.min(200, Math.max(0, Math.floor(Number(body.contextWords ?? DEFAULT_CONTEXT_WORDS)) || 0));
     const wanted = Array.isArray(body.jobIds) ? new Set(body.jobIds) : null;
+    const exclude = (Array.isArray(body.exclude) ? body.exclude : [])
+      .filter((x) => typeof x === 'string' && normalizeQuery(x)).slice(0, 20);
     const videos = this.searchableVideos().filter((v) => !wanted || wanted.has(v.id));
     const results = [];
     let matches = 0;
@@ -855,14 +857,14 @@ class Scheduler {
       for (const part of d.parts) {
         sections.push({ key: `part-${part.index}`, label: `Part ${part.index} of ${d.parts.length}`, provider: part.provider, text: part.text });
       }
-      const found = searchSections(sections, query, contextWords);
+      const found = searchSections(sections, query, contextWords, exclude);
       if (!found.length) continue;
       const count = found.reduce((sum, section) => sum + section.ranges.length, 0);
       matches += count;
       results.push({ ...video, matchCount: count, sections: found });
     }
     results.sort((a, b) => b.matchCount - a.matchCount || String(b.createdAt).localeCompare(String(a.createdAt)));
-    return { query, contextWords, searched: videos.length, matches, results };
+    return { query, exclude, contextWords, searched: videos.length, matches, results };
   }
 
   saveSettings(body) {

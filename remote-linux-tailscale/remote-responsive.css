@@ -195,3 +195,13 @@ mark.search-hit.current { background: #ff9f1c; outline: 2px solid #fff; }
   #search-dialog .search-body { padding: 10px 12px 18px; }
 }
 @media (pointer: coarse) { #search-dialog .scope-item { min-height: 44px; } }
+
+/* "Not" phrases in search */
+#search-dialog .search-not { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+#search-dialog .search-not input { flex: 1 1 200px; min-width: 0; font-size: 14px; }
+#search-dialog .not-chips { display: contents; }
+#search-dialog .not-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px;
+  border: 1px solid var(--bad); color: var(--bad); font-size: 13px; font-weight: 700; unicode-bidi: plaintext;
+}
+#search-dialog .not-remove { padding: 0 7px; border: 0; background: none; color: inherit; min-height: 0; font-size: 12px; }
