@@ -74,6 +74,12 @@ Open from any browser on a device that has the Tailscale app connected:
 `http://100.x.y.z:8787/?token=TOKEN`. After the first visit the token is
 remembered in a cookie, so later visits work without it.
 
+**Without Tailscale on the phone:** the same dashboard is also published with
+Tailscale Funnel at `https://YOUR-MACHINE.YOUR-TAILNET.ts.net:8443/?token=TOKEN`
+(port 443 belongs to another app). Anyone on the internet can reach that
+address, so the token is the only lock; keep it secret. Turn it off with
+`tailscale funnel --https=8443 off`.
+
 **Sign in to the AI sites (once):** dashboard → *Open sign-in screen*. This
 shows the server's own Chrome inside your browser tab (noVNC); log in to
 ChatGPT, Gemini and Claude there. Chrome runs headed on a private virtual
