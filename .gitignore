@@ -1,0 +1,5 @@
+/data/
+/.local-test/
+/tests/*-profile/
+/kiwi-extension.zip
+/split-server-state-*/

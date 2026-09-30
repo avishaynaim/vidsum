@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>YT Summary</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b10;
+      --panel: #111823;
+      --panel-2: #172231;
+      --line: #22303f;
+      --line-soft: #1a2432;
+      --text: #eaf1fa;
+      --muted: #8ea2ba;
+      --accent: #5fa8ff;
+      --mint: #57e0b0;
+      --warn: #ffbf5c;
+      --bad: #ff7d7d;
+      --radius: 14px;
+      --gap: clamp(10px, 1.4vw, 18px);
+      font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-synthesis-weight: none;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      padding: 0 clamp(10px, 2vw, 28px) calc(28px + env(safe-area-inset-bottom));
+      background:
+        radial-gradient(1100px 520px at 12% -12%, rgba(95,168,255,.12), transparent 62%),
+        radial-gradient(900px 480px at 92% -4%, rgba(87,224,176,.10), transparent 60%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      font-size: 15px;
+      min-height: 100vh;
+    }
+    h1, h2, h3 { margin: 0; line-height: 1.2; letter-spacing: -.01em; }
+    p { margin: 0; }
+    a { color: var(--mint); }
+    .muted { color: var(--muted); font-size: 13px; }
+
+    /* ---------- top bar ---------- */
+    .topbar {
+      position: sticky; top: 0; z-index: 30;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+      padding: 10px 0 10px;
+      margin-bottom: var(--gap);
+      background: linear-gradient(180deg, var(--bg) 72%, transparent);
+      backdrop-filter: blur(8px);
+    }
+    .brand { display: flex; align-items: baseline; gap: 9px; margin-right: auto; }
+    .brand b {
+      font-size: 17px; font-weight: 800;
+      background: linear-gradient(92deg, var(--accent), var(--mint));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .brand span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+    #state {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 999px; padding: 4px 13px; font-size: 12.5px; font-weight: 700;
+    }
+    #state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--mint); }
+    #capacity { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    /* ---------- layout ---------- */
+    .layout { display: grid; gap: var(--gap); align-items: start; }
+    @media (min-width: 1080px) { .layout { grid-template-columns: minmax(300px, 25vw) minmax(0, 1fr); } }
+    @media (min-width: 1700px) { .layout { grid-template-columns: minmax(340px, 380px) minmax(0, 1fr); } }
+    .col { display: grid; gap: var(--gap); align-items: start; min-width: 0; }
+
+    .panel {
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--line); border-radius: var(--radius);
+      padding: clamp(12px, 1.4vw, 18px);
+      min-width: 0;
+    }
+    .panel > * + * { margin-top: 10px; }
+    .panel-title {
+      display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+      font-size: 11.5px; font-weight: 800; text-transform: uppercase;
+      letter-spacing: .1em; color: var(--muted);
+    }
+
+    /* ---------- controls ---------- */
+    button, .bookmark {
+      font: inherit; font-size: 13.5px; font-weight: 650;
+      border-radius: 10px; border: 1px solid var(--line);
+      padding: 8px 14px; cursor: pointer; color: var(--text);
+      background: var(--panel-2);
+      transition: border-color .14s ease, background .14s ease, transform .14s ease;
+    }
+    button:hover:not(:disabled), .bookmark:hover { border-color: var(--accent); }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button:disabled { opacity: .45; cursor: default; }
+    button.primary {
+      background: linear-gradient(95deg, var(--accent), var(--mint));
+      border-color: transparent; color: #04121d; font-weight: 800;
+    }
+    .bookmark {
+      display: inline-block; text-decoration: none;
+      background: rgba(87,224,176,.14); border-color: rgba(87,224,176,.4); color: var(--mint);
+    }
+    select, textarea {
+      width: 100%; font: inherit; font-size: 13.5px; padding: 9px 10px;
+      background: #0b1018; color: var(--text);
+      border: 1px solid var(--line); border-radius: 10px;
+    }
+    textarea { min-height: 88px; resize: vertical; }
+    select:disabled { opacity: .5; }
+    :focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+    label.field { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+    legend { padding: 0; font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .provider-toggle {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 650;
+      background: var(--panel-2); border: 1px solid var(--line); cursor: pointer;
+      user-select: none;
+    }
+    .provider-toggle:hover { border-color: var(--accent); }
+    .provider-toggle input { width: 15px; height: 15px; margin: 0; accent-color: var(--mint); }
+    .chip-count {
+      min-width: 17px; padding: 0 5px; border-radius: 999px;
+      background: var(--panel); border: 1px solid var(--line);
+      font-size: 11px; font-weight: 800; color: var(--muted); text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .chip-count.chip-zero { opacity: .45; }    .row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .row > * { flex: 0 1 auto; }
+
+    /* ---------- drop targets ---------- */
+    #batch-dropzone { border: 2px dashed transparent; border-radius: 12px; transition: border-color .14s, background .14s; }
+    #batch-dropzone.drag-over { border-color: var(--mint); background: rgba(87,224,176,.08); }
+    .level-dropzones { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 6px; }
+    .level-dropzone {
+      border: 1px dashed var(--line); border-radius: 10px; padding: 7px 6px;
+      text-align: center; font-weight: 700; font-size: 12.5px;
+      transition: border-color .14s, background .14s;
+    }
+    .level-dropzone .muted { display: block; font-size: 10.5px; font-weight: 500; }
+    .level-dropzone.drag-over { border-color: var(--mint); border-style: solid; background: rgba(87,224,176,.1); }
+
+    /* ---------- notices ---------- */
+    .notice {
+      border: 1px solid rgba(255,191,92,.45); border-left-width: 4px;
+      border-radius: 12px; padding: 11px 14px;
+      color: #ffd9a6; background: rgba(255,191,92,.07);
+      overflow-wrap: anywhere;
+    }
+    .notice strong { display: block; font-size: 14px; margin-bottom: 2px; color: #ffe6c4; }
+    .notice p { margin: 3px 0; font-size: 13px; }
+    .notice button { margin-top: 8px; background: var(--warn); color: #241704; border-color: transparent; font-weight: 800; }
+    #message { font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+    #message.error, .error { color: var(--bad); }
+    #video { font-size: 12px; }
+    #action-message { font-size: 13px; color: var(--muted); min-height: 1.2em; }
+    #batch-result { font-size: 13px; white-space: pre-wrap; }
+
+    /* ---------- jobs ---------- */
+    .jobs-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .jobs-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 6px; }
+    .jobs-search input {
+      flex: 1 1 220px; min-width: 0; font: inherit; font-size: 13.5px; padding: 8px 12px;
+      background: #0b1018; color: var(--text); border: 1px solid var(--line); border-radius: 999px;
+    }
+    .jobs-search input:focus { border-color: var(--accent); }
+    .jobs-search input::placeholder { color: var(--muted); }
+    #job-search-hint { flex-basis: 100%; margin: 0; }
+    .count-badge {
+      display: inline-block; background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 999px; padding: 0 8px; font-size: 11.5px; color: var(--muted); font-weight: 800;
+    }
+    h3.jobs-heading {
+      display: flex; align-items: center; gap: 8px; margin: 2px 0 8px;
+      font-size: 11.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted);
+    }
+    .jobs-heading select.sort-select {
+      margin-left: auto; text-transform: none; letter-spacing: normal; font-size: 12px;
+      font-weight: 600; color: var(--fg); background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 8px; padding: 3px 7px;
+    }
+    #jobs-active-block { margin-bottom: 4px; }
+    .job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 268px), 1fr)); gap: 10px; }
+    @media (min-width: 1700px) { .job-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); } }
+    .job-card {
+      background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
+      padding: 11px 13px; display: flex; flex-direction: column; gap: 7px; min-width: 0;
+    }
+    .job-card:hover { border-color: #33455a; }
+    .job-card.day-color-0 { border-left: 4px solid #60a5fa; }
+    .job-card.day-color-1 { border-left: 4px solid #34d399; }
+    .job-card.day-color-2 { border-left: 4px solid #fbbf24; }
+    .job-card.day-color-3 { border-left: 4px solid #f472b6; }
+    .job-card.day-color-4 { border-left: 4px solid #a78bfa; }
+    .job-card.day-color-5 { border-left: 4px solid #fb923c; }
+    .job-card.day-start::before {
+      content: attr(data-day-label); order: -3; font-size: 10.5px; font-weight: 800;
+      text-transform: uppercase; letter-spacing: .09em; color: var(--mint);
+      border-bottom: 1px solid var(--line-soft); padding-bottom: 5px;
+    }
+    /* Status groups: every group starts on its own grid row and its first card carries the
+       group heading, so same-status videos read as one block without nesting extra
+       containers inside #jobs-active / #jobs-history. */
+    .job-card.group-start { grid-column-start: 1; margin-top: 6px; }
+    .job-card.group-start::after {
+      content: attr(data-group-label); order: -4; align-self: flex-start;
+      font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em;
+      padding: 3px 9px; border-radius: 999px; color: #0a0f16;
+      background: var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.35);
+    }
+    .job-card.group-queued::after { background: #8ea4bd; }
+    .job-card.group-active::after { background: var(--accent); }
+    .job-card.group-attention::after { background: var(--warn); }
+    .job-card.group-completed::after { background: var(--mint); }
+    .job-card.group-failed::after { background: var(--bad); color: #fff; }
+    .job-card.group-other::after { background: #6b7a8d; }
+    .job-card.group-attention { background: linear-gradient(180deg, rgba(251,191,36,.07), transparent 60%), var(--panel-2); }
+    .job-card.group-failed { background: linear-gradient(180deg, rgba(248,113,113,.08), transparent 60%), var(--panel-2); }
+    .job-card.group-completed { background: linear-gradient(180deg, rgba(87,224,176,.07), transparent 60%), var(--panel-2); }
+    .job-card.day-color-0 .job-day { background: rgba(96,165,250,.2); color: #cfe3ff; }
+    .job-card.day-color-1 .job-day { background: rgba(52,211,153,.2); color: #cdfbe7; }
+    .job-card.day-color-2 .job-day { background: rgba(251,191,36,.2); color: #ffedbb; }
+    .job-card.day-color-3 .job-day { background: rgba(244,114,182,.2); color: #ffd6ea; }
+    .job-card.day-color-4 .job-day { background: rgba(167,139,250,.2); color: #e3d9ff; }
+    .job-card.day-color-5 .job-day { background: rgba(251,146,60,.2); color: #ffe1c7; }
+    .job-card-head { display: flex; flex-wrap: wrap; gap: 5px 10px; justify-content: space-between; align-items: center; }
+    .job-card-head a { font-weight: 700; text-decoration: none; font-size: 13px; }
+    .job-card-head a:hover { text-decoration: underline; }
+    .job-card-meta { display: flex; flex-wrap: wrap; gap: 3px 10px; font-size: 11.5px; color: var(--muted); }
+    .job-day { order: -1; border: 1px solid currentColor; border-radius: 999px; padding: 0 7px; color: #d8e4ff; font-weight: 700; }
+    .job-title { order: -2; flex-basis: 100%; font-size: 13.5px; font-weight: 700; overflow-wrap: anywhere; }
+    .job-card-message { font-size: 12.5px; margin: 0; overflow-wrap: anywhere; color: var(--muted); }
+    .job-card-message.error { color: var(--bad); }
+    .job-card-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 3px; }
+    .job-card-actions button, .job-card-actions a { font-size: 11.5px; padding: 5px 9px; border-radius: 8px; }
+    /* Real <a target="_blank"> links, not a window.open() loop: each one is its own ordinary
+       link click, so the browser's one-popup-per-gesture limit never blocks the later parts. */
+    .parts-list { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 5px; }
+    .parts-list[hidden] { display: none; }
+    .job-card-actions a {
+      display: inline-block; border: 1px solid var(--line); background: var(--panel);
+      text-decoration: none; color: var(--mint); font-weight: 650;
+    }
+    .job-card-actions a[hidden] { display: none !important; }
+    .job-level-select { font-size: 11.5px; padding: 4px 7px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); width: auto; }
+    .duration-badge { display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800; line-height: 1.5; }
+    .duration-badge[hidden] { display: none !important; }
+    .duration-short { background: rgba(52,199,120,.16); color: #4ade80; }
+    .duration-medium { background: rgba(56,132,255,.16); color: var(--accent); }
+    .duration-long { background: rgba(245,180,60,.18); color: var(--warn); }
+    .duration-extreme { background: rgba(255,99,99,.16); color: var(--bad); }
+    .job-parts-emphasis { font-weight: 800; color: var(--mint); }
+    .job-card.has-saved-transcript {
+      border-left: 3px solid #38bdf8;
+      box-shadow: 0 0 10px rgba(56,189,248,.12);
+    }
+    .transcript-saved-badge {
+      display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px;
+      border-radius: 999px; font-size: 11px; font-weight: 800; line-height: 1.5;
+      background: rgba(56,189,248,.18); color: #38bdf8; border: 1px solid rgba(56,189,248,.4);
+    }
+    .transcript-saved-badge[hidden] { display: none !important; }
+
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 800; line-height: 1.5; white-space: nowrap; }
+    .badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+    .badge-queued { background: rgba(148,163,184,.16); color: #b7c3d4; }
+    .badge-active { background: rgba(56,132,255,.16); color: var(--accent); }
+    .badge-active.pulse::before { animation: yt-pulse 1.4s ease-in-out infinite; }
+    .badge-attention { background: rgba(245,180,60,.18); color: var(--warn); }
+    .badge-success { background: rgba(52,199,120,.16); color: #4ade80; }
+    .badge-error { background: rgba(255,99,99,.16); color: var(--bad); }
+    .badge-muted { background: rgba(148,163,184,.12); color: var(--muted); }
+    @keyframes yt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+    @media (prefers-reduced-motion: reduce) { .badge-active.pulse::before { animation: none; } }
+
+    /* ---------- collapsed reference ---------- */
+    details.fold {
+      background: var(--panel); border: 1px solid var(--line-soft);
+      border-radius: 12px; padding: 10px 14px;
+    }
+    details.fold + details.fold { margin-top: 8px; }
+    details.fold > summary {
+      cursor: pointer; font-size: 12.5px; font-weight: 700; color: var(--muted);
+      list-style: none; display: flex; align-items: center; gap: 8px;
+    }
+    details.fold > summary::-webkit-details-marker { display: none; }
+    details.fold > summary::before { content: '+'; color: var(--mint); font-weight: 800; }
+    details.fold[open] > summary::before { content: '-'; }
+    details.fold[open] > summary { margin-bottom: 10px; }
+    details.fold > summary:hover { color: var(--text); }
+    details.fold > * + * { margin-top: 10px; }
+    .fold-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 12px; align-items: start; }
+    .bookmarks-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+    ol { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+    ol li { margin: 5px 0; }
+    .help-text { font-size: 12.5px; color: var(--muted); }
+    .help-text p + p { margin-top: 7px; }
+    #full-result-text { min-height: 220px; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+  </style>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><b>YT Summary</b><span>local only</span></div>
+    <span id="state">Connecting</span>
+    <span id="capacity"></span>
+  </header>
+
+  <div class="layout">
+    <!-- ================= left: act ================= -->
+    <div class="col">
+      <section class="panel" aria-live="polite">
+        <div class="panel-title">Status</div>
+        <div id="controller-offline" class="notice" hidden>
+          <strong>Helper stopped or unreachable</strong>
+          <p id="offline-message">Showing the last status received.</p>
+          <p id="offline-updated" class="muted"></p>
+        </div>
+        <div id="browser-unavailable" class="notice" hidden>
+          <strong>Browser unavailable</strong>
+          <p id="browser-recovery-message">Queued videos reopen the browser automatically.</p>
+        </div>
+        <div id="quota-pause" class="notice" hidden>
+          <strong id="pause-title">Paused for a ChatGPT usage limit</strong>
+          <p id="pause-reason"></p>
+          <p id="pause-advice">Wait for the quota to reset, then resume.</p>
+          <button id="resume" hidden>Resume</button>
+        </div>
+        <p id="message">Connecting to your local helper...</p>
+        <p id="video" class="muted"></p>
+        <button id="retry" hidden>Retry this launch request</button>
+        <p id="action-message" role="status"></p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">Add videos</div>
+        <div id="batch-dropzone">
+          <label class="field" for="batch">Paste or drop YouTube links, one per line</label>
+          <textarea id="batch" placeholder="https://www.youtube.com/watch?v=..." spellcheck="false"></textarea>
+        </div>
+        <div class="row">
+          <button id="add-batch" class="primary">Add videos</button>
+        </div>
+        <p id="batch-result" role="status"></p>
+        <div class="panel-title">Or drop straight onto a depth</div>
+        <div id="level-dropzones" class="level-dropzones">
+          <div id="level-dropzone-ultra" class="level-dropzone" data-level="ultra">Ultra<span class="muted">2-4k</span></div>
+          <div id="level-dropzone-max" class="level-dropzone" data-level="max">Max<span class="muted">1-2k</span></div>
+          <div id="level-dropzone-reg" class="level-dropzone" data-level="reg">Reg<span class="muted">400-800</span></div>
+          <div id="level-dropzone-min" class="level-dropzone" data-level="min">Min<span class="muted">100-200</span></div>
+          <div id="level-dropzone-micro" class="level-dropzone" data-level="micro">Micro<span class="muted">1-3 sent.</span></div>
+          <div id="level-dropzone-full" class="level-dropzone" data-level="full">Full<span class="muted">transcript</span></div>
+          <div id="level-dropzone-later" class="level-dropzone">Later<span class="muted">on hold</span></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">Defaults for new videos</div>
+        <div>
+          <label class="field" for="summary-level">Level</label>
+          <select id="summary-level" aria-describedby="summary-level-description" disabled>
+            <option value="ultra" selected>Ultra - comprehensive study notes</option>
+            <option value="max">Max - detailed summary</option>
+            <option value="reg">Reg - balanced overview</option>
+            <option value="min">Min - essential points</option>
+            <option value="micro">Micro - conclusion only</option>
+            <option value="full">Full - complete transcript</option>
+          </select>
+          <p id="summary-level-description" class="muted"></p>
+          <p id="summary-level-status" class="muted" role="status">Loading...</p>
+        </div>
+        <div>
+          <label class="field" for="summary-language">Language</label>
+          <select id="summary-language" disabled>
+            <option value="hebrew" selected>Hebrew</option>
+          </select>
+        </div>
+        <fieldset>
+          <legend>Providers</legend>
+          <div class="chips" style="margin-top:6px">
+            <label class="provider-toggle"><input id="provider-chatgpt" type="checkbox" checked disabled> ChatGPT</label>
+            <label class="provider-toggle"><input id="provider-gemini" type="checkbox" checked disabled> Gemini</label>
+            <label class="provider-toggle"><input id="provider-claude" type="checkbox" checked disabled> Claude</label>
+          </div>
+        </fieldset>
+        <p id="provider-settings-status" class="muted" role="status">Loading...</p>
+        <div>
+          <label class="field" for="first-provider">First in rotation</label>
+          <select id="first-provider" disabled>
+            <option id="first-provider-chatgpt" value="ChatGPT" selected>ChatGPT</option>
+            <option id="first-provider-gemini" value="Gemini">Gemini</option>
+            <option id="first-provider-claude" value="Claude">Claude</option>
+          </select>
+          <p id="provider-order" class="muted">ChatGPT → Gemini → Claude</p>
+        </div>
+        <label class="provider-toggle"><input id="keep-intermediate-tabs" type="checkbox" disabled> Keep part/merge tabs open</label>
+        <p id="keep-intermediate-tabs-status" class="muted" role="status">Loading...</p>
+        <p id="summary-level-help" class="muted" hidden>Each accepted job keeps its own level; changing a historical video's level clears its incompatible progress.</p>
+        <p id="summary-language-help" class="muted" hidden>Every level except Full is written in Hebrew.</p>
+        <p id="keep-intermediate-tabs-help" class="muted" hidden>Off by default: intermediate tabs close once their reply is saved.</p>
+      </section>
+    </div>
+
+    <!-- ================= right: jobs ================= -->
+    <div class="col">
+      <section class="panel">
+        <div class="jobs-toolbar">
+          <div class="panel-title" style="margin-right:auto">Video jobs</div>
+          <button id="retry-today" hidden>Retry today's</button>
+          <button id="clear-errors" hidden>Clear failed</button>
+          <button id="clear-duplicates" hidden>Clear duplicates</button>
+          <button id="clear-cancelled" hidden>Clear cancelled</button>
+        </div>
+        <div class="jobs-search">
+          <input id="job-search" type="search" autocomplete="off" spellcheck="false"
+            placeholder="Search videos by title or ID" aria-label="Search video jobs by title or video ID">
+          <button id="job-search-clear" hidden>Clear search</button>
+          <p id="job-search-hint" class="muted" hidden>Search looks at every video and ignores the status filters below.</p>
+        </div>
+        <fieldset id="status-filters">
+          <div class="chips">
+            <label class="provider-toggle"><input id="status-filter-queued" type="checkbox" checked> Queued <span id="status-count-queued" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="status-filter-active" type="checkbox" checked> Active <span id="status-count-active" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="status-filter-attention" type="checkbox" checked> Attention <span id="status-count-attention" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="status-filter-completed" type="checkbox"> Completed <span id="status-count-completed" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="status-filter-failed" type="checkbox" checked> Failed <span id="status-count-failed" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="status-filter-other" type="checkbox" checked> Cancelled <span id="status-count-other" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="status-filter-today" type="checkbox" checked> Today only <span id="status-count-today" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="status-filter-watch-later" type="checkbox"> Watch later <span id="status-count-watch-later" class="chip-count">0</span></label>
+          </div>
+        </fieldset>
+        <fieldset id="length-filters">
+          <div class="chips">
+            <label class="provider-toggle"><input id="length-filter-short" type="checkbox" checked> Short &lt;30m <span id="length-count-short" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="length-filter-medium" type="checkbox" checked> Medium 30m-1h <span id="length-count-medium" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="length-filter-long" type="checkbox" checked> Long 1-6h <span id="length-count-long" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="length-filter-extreme" type="checkbox" checked> Extreme 6h+ <span id="length-count-extreme" class="chip-count">0</span></label>
+            <label class="provider-toggle"><input id="length-filter-unknown" type="checkbox" checked> Unknown length <span id="length-count-unknown" class="chip-count">0</span></label>
+          </div>
+        </fieldset>
+        <p id="empty-jobs" class="muted">No videos yet.</p>
+        <div id="jobs-active-block" hidden>
+          <h3 class="jobs-heading">Active <span id="active-count" class="count-badge">0</span>
+            <select id="active-sort" class="sort-select" title="Order Active jobs by">
+              <option value="updated">Last updated</option>
+              <option value="status">Status</option>
+              <option value="created">Created date</option>
+              <option value="title">Title (A-Z)</option>
+            </select>
+          </h3>
+          <p id="active-filtered-empty" class="muted" hidden>No active jobs match the filters.</p>
+          <div id="jobs-active" class="job-grid"></div>
+        </div>
+        <div id="jobs-history-block" hidden>
+          <h3 class="jobs-heading">History <span id="history-count" class="count-badge">0</span>
+            <select id="history-sort" class="sort-select" title="Order History jobs by">
+              <option value="updated">Last updated</option>
+              <option value="status">Status</option>
+              <option value="created">Created date</option>
+              <option value="title">Title (A-Z)</option>
+            </select>
+          </h3>
+          <p id="history-filtered-empty" class="muted" hidden>No history jobs match the filters.</p>
+          <div id="jobs-history" class="job-grid"></div>
+        </div>
+      </section>
+
+      <section id="full-result" class="panel" hidden>
+        <div class="panel-title">Full transcript result</div>
+        <div class="row">
+          <button id="copy-full-result" class="primary">Copy full transcript</button>
+          <button id="close-full-result">Close</button>
+        </div>
+        <textarea id="full-result-text" readonly aria-label="Complete structured transcript"></textarea>
+      </section>
+
+      <div>
+        <details class="fold" id="setup">
+          <summary>Bookmarks and setup</summary>
+          <ol>
+            <li>Sign into the provider websites in the separate Chrome window.</li>
+            <li>Drag a button below onto your normal browser's bookmarks bar (Ctrl+Shift+B).</li>
+            <li>Click it on a YouTube video, or use the batch bookmark on any listing page.</li>
+          </ol>
+          <div id="bookmarks" class="bookmarks-grid">
+            <a id="bookmark" class="bookmark" draggable="true" data-level="ultra">Ultra</a>
+            <a id="bookmark-max" class="bookmark" draggable="true" data-level="max">Max</a>
+            <a id="bookmark-reg" class="bookmark" draggable="true" data-level="reg">Reg</a>
+            <a id="bookmark-min" class="bookmark" draggable="true" data-level="min">Min</a>
+            <a id="bookmark-micro" class="bookmark" draggable="true" data-level="micro">Micro</a>
+            <a id="bookmark-full" class="bookmark" draggable="true" data-level="full">Full</a>
+            <a id="bookmark-batch" class="bookmark" draggable="true">All videos on page</a>
+          </div>
+          <details class="fold">
+            <summary>Copy a bookmark address instead</summary>
+            <div class="fold-grid">
+              <div>
+                <label class="field" for="copy-level">Level</label>
+                <select id="copy-level">
+                  <option value="ultra" selected>Ultra</option>
+                  <option value="max">Max</option>
+                  <option value="reg">Reg</option>
+                  <option value="min">Min</option>
+                  <option value="micro">Micro</option>
+                  <option value="full">Full</option>
+                </select>
+                <button id="copy" style="margin-top:8px">Copy address</button>
+                <textarea id="bookmark-code" readonly aria-label="Full bookmark address"></textarea>
+              </div>
+              <div>
+                <label class="field">Batch bookmark</label>
+                <button id="copy-batch">Copy batch address</button>
+                <textarea id="bookmark-batch-code" readonly aria-label="Full batch bookmark address"></textarea>
+              </div>
+            </div>
+          </details>
+          <div id="kiwi-setup" class="help-text" hidden>
+            <h3>Kiwi on Android</h3>
+            <p>Mobile access is enabled on this private Wi-Fi/LAN. Install the unpacked extension from <code>kiwi-extension</code>, then paste this private pairing URL into its options.</p>
+            <button id="copy-kiwi-pairing">Copy Kiwi pairing URL</button>
+            <textarea id="kiwi-pairing-url" readonly aria-label="Kiwi pairing URL"></textarea>
+            <p>Keep the pairing URL private. Never forward the helper port through your router or use it on public Wi-Fi.</p>
+          </div>
+        </details>
+
+        <details class="fold">
+          <summary>How it works</summary>
+          <div class="help-text">
+            <p>Long transcripts are split into ~20,000-character chunks, summarized separately, then merged. Each stage rotates to the next provider and resumes from its saved checkpoint.</p>
+            <p>Up to four videos run at once, one in-flight generation per provider, 2s between starts. Each video keeps its own tab.</p>
+            <p>Existing drafts are never overwritten. If a login or Cloudflare check appears, complete it in that browser window.</p>
+            <p>A usage cap pauses new dispatch without cancelling running work. Saved progress is kept.</p>
+          </div>
+        </details>
+
+        <details class="fold">
+          <summary>Privacy and shutdown</summary>
+          <div class="help-text">
+            <p>Keep the bookmark private: it holds a local authorization token. Transcripts stay in memory except Full results you requested. Job metadata, links and the browser profile are stored locally only.</p>
+          </div>
+          <button id="stop">Stop helper and close its browser</button>
+        </details>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>YT Summary local fixture</title></head>
+<body>
+  <div id="transcript">
+    <aside>ADVERTISEMENT - NOT THE TRANSCRIPT</aside>
+    <p><span data-start="0"><span class="ts-badge">00:00</span>Hello &amp; welcome.</span></p>
+    <p><span data-start="1"> Second <span class="ts-badge">00:01</span> segment. </span></p>
+    <a>Back To Top</a>
+  </div>
+  <button type="submit" id="unrelated">Unrelated submit</button>
+  <form id="composer">
+    <div id="prompt-textarea" role="textbox" contenteditable="true" style="border:1px solid;width:600px;min-height:80px"></div>
+    <button data-testid="send-button" type="submit" disabled aria-label="Send message">Send</button>
+    <button data-testid="stop-button" type="button" hidden aria-label="Stop generating">Stop</button>
+  </form>
+  <div id="messages"></div>
+  <script>
+    window.sendCount = 0;
+    window.unrelatedCount = 0;
+    const form = document.getElementById('composer');
+    const send = form.querySelector('[data-testid="send-button"]');
+    document.getElementById('unrelated').onclick = () => window.unrelatedCount++;
+    form.addEventListener('input', () => setTimeout(() => {send.disabled = false}, 25));
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const editor = document.getElementById('prompt-textarea');
+      const message = document.createElement('div');
+      message.dataset.messageAuthorRole = 'user';
+      const body = document.createElement('div');
+      body.className = 'whitespace-pre-wrap';
+      body.style.whiteSpace = 'pre-wrap';
+      body.textContent = editor.value === undefined ? editor.innerText : editor.value;
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.textContent = 'Show more';
+      const alternate = document.createElement('span');
+      alternate.hidden = true;
+      alternate.textContent = 'Show less';
+      toggle.append(alternate);
+      toggle.addEventListener('click', () => {
+        toggle.firstChild.textContent = toggle.firstChild.textContent === 'Show more' ? 'Show less' : 'Show more';
+      });
+      message.append(body, toggle);
+      document.getElementById('messages').append(message);
+      if (editor.value === undefined) editor.textContent = '';
+      else editor.value = '';
+      form.querySelectorAll('[data-testid="composer-attachment-chip"]').forEach(chip => chip.remove());
+      send.disabled = true;
+      window.sendCount++;
+    });
+    window.useTextarea = () => {
+      const editor = document.getElementById('prompt-textarea');
+      const replacement = document.createElement('textarea');
+      replacement.id = 'prompt-textarea';
+      replacement.placeholder = 'Message ChatGPT';
+      editor.replaceWith(replacement);
+    };
+    window.attachFile = () => {
+      // Simulates a provider (observed with Claude) auto-converting a very large paste into
+      // a file attachment instead of literal editor text.
+      const editor = document.getElementById('prompt-textarea');
+      if (editor.value !== undefined) editor.value = '';
+      else editor.textContent = '';
+      const chip = document.createElement('div');
+      chip.setAttribute('data-testid', 'composer-attachment-chip');
+      chip.className = 'attachment-chip';
+      chip.textContent = 'Attached file: 21 lines';
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', 'Remove attachment');
+      remove.textContent = 'x';
+      remove.addEventListener('click', () => chip.remove());
+      chip.append(remove);
+      form.insertBefore(chip, send);
+      send.disabled = false;
+    };
+    window.useGeminiLayout = () => {
+      // Gemini's composer is not inside a <form>, and the page also renders a
+      // "Send feedback" button. A flat document-wide send lookup saw two candidates and
+      // refused to click, so the prompt was pasted and then never sent.
+      document.getElementById('composer')?.remove();
+      // Re-applying the layout must replace the previous one, never stack a second composer.
+      document.querySelectorAll('.input-area-container,[aria-label="Send feedback"]')
+        .forEach(e => e.remove());
+      window.geminiSendCount = 0;
+      window.geminiFeedbackCount = 0;
+      const area = document.createElement('div');
+      area.className = 'input-area-container';
+      const rich = document.createElement('rich-textarea');
+      const editor = document.createElement('div');
+      editor.className = 'ql-editor';
+      editor.setAttribute('contenteditable', 'true');
+      editor.setAttribute('role', 'textbox');
+      editor.style.cssText = 'border:1px solid;width:600px;min-height:80px';
+      rich.append(editor);
+      const send = document.createElement('button');
+      send.className = 'send-button';
+      send.setAttribute('aria-label', 'Send message');
+      send.textContent = 'Send';
+      send.addEventListener('click', event => {
+        window.geminiSendCount++;
+        window.geminiSendWasTrusted = event.isTrusted;
+        const message = document.createElement('user-query');
+        message.textContent = editor.innerText;
+        document.getElementById('messages').append(message);
+        editor.textContent = '';
+      });
+      area.append(rich, send);
+      const feedback = document.createElement('button');
+      feedback.setAttribute('aria-label', 'Send feedback');
+      feedback.textContent = 'Send feedback';
+      feedback.addEventListener('click', () => window.geminiFeedbackCount++);
+      document.body.append(area, feedback);
+      return {editor, send};
+    };
+    window.useGeminiFrameworkLayout = () => {
+      // Gemini's Send button is driven by an Angular value accessor, not by the DOM. A
+      // native insertText input event is not always enough to flip it: this models an
+      // accessor that only syncs on an explicit change notification, so text inserted into
+      // the contenteditable is visible while Send stays dead and nothing is ever sent.
+      const {editor, send} = window.useGeminiLayout();
+      send.disabled = true;
+      window.geminiFrameworkNotified = 0;
+      editor.addEventListener('change', () => {
+        window.geminiFrameworkNotified++;
+        send.disabled = !(editor.innerText || '').trim();
+      });
+    };
+    window.useGeminiHebrewLayout = () => {
+      // A Hebrew Gemini carries no English word anywhere in the composer: the real Send
+      // button is an icon button labelled "שליחת הודעה" with no .send-button class, and it
+      // is only rendered while the composer holds text. Every English-only selector matched
+      // zero elements, so the prompt was pasted and then silently never sent.
+      document.getElementById('composer')?.remove();
+      document.querySelectorAll('.text-input-field,.input-area-container,[aria-label="Send feedback"]')
+        .forEach(e => e.remove());
+      window.geminiSendCount = 0;
+      window.geminiMicCount = 0;
+      window.geminiPlusCount = 0;
+      const area = document.createElement('div');
+      area.className = 'text-input-field simplified-input-area';
+      const rich = document.createElement('rich-textarea');
+      const editor = document.createElement('div');
+      editor.className = 'ql-editor';
+      editor.setAttribute('contenteditable', 'true');
+      editor.setAttribute('role', 'textbox');
+      editor.style.cssText = 'border:1px solid;width:600px;min-height:80px';
+      rich.append(editor);
+      area.append(rich);
+      const iconButton = (name, label, onClick) => {
+        const button = document.createElement('button');
+        button.className = 'mdc-icon-button mat-mdc-icon-button mat-mdc-button-base';
+        button.setAttribute('aria-label', label);
+        const icon = document.createElement('mat-icon');
+        icon.setAttribute('data-mat-icon-name', name);
+        icon.textContent = name;
+        button.append(icon);
+        button.addEventListener('click', onClick);
+        return button;
+      };
+      area.append(iconButton('plus', 'העלאה וכלים', () => window.geminiPlusCount++));
+      area.append(iconButton('mic', 'הכתבה (^⇧D)', () => window.geminiMicCount++));
+      let send = null;
+      const sync = () => {
+        const hasText = !!(editor.innerText || '').trim();
+        if (hasText && !send) {
+          send = iconButton('arrow_upward', 'שליחת הודעה', () => {
+            window.geminiSendCount++;
+            const message = document.createElement('user-query');
+            message.textContent = editor.innerText;
+            document.getElementById('messages').append(message);
+            editor.textContent = '';
+            sync();
+          });
+          area.append(send);
+        } else if (!hasText && send) {
+          send.remove();
+          send = null;
+        }
+      };
+      editor.addEventListener('input', sync);
+      const feedback = document.createElement('button');
+      feedback.setAttribute('aria-label', 'Send feedback');
+      feedback.textContent = 'Send feedback';
+      document.body.append(area, feedback);
+      return {editor};
+    };
+    window.addAssistantReply = (text, error = false) => {
+      const message = document.createElement('div');
+      message.dataset.messageAuthorRole = 'assistant';
+      const container = document.createElement('div');
+      if (error) container.className = 'text-token-text-error';
+      const markdown = document.createElement('div');
+      markdown.className = 'markdown';
+      markdown.textContent = text;
+      container.append(markdown);
+      message.append(container);
+      document.getElementById('messages').append(message);
+    };
+  </script>
+</body>
+</html>

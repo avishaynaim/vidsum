@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>YT Summary pairing</title>
+  <style>
+    body { margin: 0; padding: 24px; color: #e5eef8; background: #08111f; font: 16px system-ui, sans-serif; }
+    main { max-width: 680px; margin: auto; }
+    label { display: block; margin: 18px 0 6px; font-weight: 700; }
+    input, select, button { box-sizing: border-box; width: 100%; padding: 12px; font: inherit; border-radius: 9px; }
+    input, select { color: #e5eef8; background: #111d2e; border: 1px solid #38516d; }
+    button { margin-top: 20px; color: #04121e; background: #38bdf8; border: 0; font-weight: 800; }
+    .muted { color: #9db0c4; }
+    #status { min-height: 1.5em; margin-top: 12px; font-weight: 700; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Pair YT Summary with Windows</h1>
+  <p class="muted">Start the Windows helper with <code>-EnableKiwi</code>. Copy the complete pairing URL printed by the helper and paste it below. Keep it private.</p>
+  <label for="pairing">Windows helper pairing URL</label>
+  <input id="pairing" type="url" inputmode="url" autocomplete="off"
+    placeholder="http://192.168.1.20:8765/#token=...">
+  <label for="level">Default summary level</label>
+  <select id="level">
+    <option value="ultra">Ultra</option>
+    <option value="max">Max</option>
+    <option value="reg">Reg</option>
+    <option value="min">Min</option>
+    <option value="micro">Micro</option>
+    <option value="full">Full transcript</option>
+  </select>
+  <label><input id="auto" type="checkbox" style="width:auto"> Automatically summarize a YouTube video freshly opened through Android Share to Kiwi</label>
+  <button id="save">Save pairing</button>
+  <div id="status" role="status"></div>
+  <p class="muted">The Windows PC and Android device must remain on the same private Wi-Fi/LAN. The provider browser automation continues on Windows; Kiwi displays the same dashboard and all job controls.</p>
+  <script src="options.js"></script>
+</main>
+</body>
+</html>

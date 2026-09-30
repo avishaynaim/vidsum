@@ -1,0 +1,30 @@
+{
+  "_comment": "Ported verbatim from Providers.psm1 (desktop selectors). Mobile Chrome often renders different markup for the same site, so these WILL likely need adjustment after live inspection on-device (chrome://inspect equivalent via the CDP Runtime.evaluate console below).",
+  "rotationOrder": ["ChatGPT", "Gemini", "Claude"],
+  "providers": {
+    "ChatGPT": {
+      "url": "https://chatgpt.com/",
+      "editorSelectors": ["#prompt-textarea", "textarea[placeholder*=\"Chat\"]", "textarea[placeholder*=\"Message\"]", "[contenteditable=\"true\"][role=\"textbox\"]"],
+      "sendSelectors": ["button[data-testid=\"send-button\"]", "button[data-composer-submit]", "button[aria-label*=\"Send\"]", "button[type=\"submit\"]"],
+      "assistantMessageSelector": "[data-message-author-role=\"assistant\"]",
+      "assistantTextSelector": ".markdown",
+      "errorSelector": ".text-token-text-error,[data-testid*=\"error\"]"
+    },
+    "Gemini": {
+      "url": "https://gemini.google.com/app",
+      "editorSelectors": ["rich-textarea .ql-editor", "div.ql-editor[contenteditable=\"true\"]", "textarea[aria-label*=\"Message\"]", "[contenteditable=\"true\"][role=\"textbox\"]"],
+      "sendSelectors": ["button:has(mat-icon[data-mat-icon-name=\"send\"])", "button:has(mat-icon[data-mat-icon-name=\"arrow_upward\"])", "button[aria-label*=\"Send message\"]", "button.send-button", "button[aria-label*=\"Send\"]"],
+      "assistantMessageSelector": "model-response",
+      "assistantTextSelector": ".markdown, message-content",
+      "errorSelector": ".error-message,[data-error]"
+    },
+    "Claude": {
+      "url": "https://claude.ai/new",
+      "editorSelectors": ["div.ProseMirror[contenteditable=\"true\"]", "[contenteditable=\"true\"][role=\"textbox\"]"],
+      "sendSelectors": ["button[aria-label*=\"Send Message\"]", "button[aria-label*=\"Send message\"]"],
+      "assistantMessageSelector": "[data-testid=\"assistant-message\"], .font-claude-message",
+      "assistantTextSelector": ".standard-markdown, .prose",
+      "errorSelector": "[data-testid=\"error-banner\"],[role=\"alert\"]"
+    }
+  }
+}

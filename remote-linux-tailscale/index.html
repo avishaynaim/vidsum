@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>YT Summary Remote</title>
+  <style>
+    body{font:16px system-ui,sans-serif;max-width:720px;margin:auto;padding:24px;background:#111827;color:#f9fafb}
+    form,section{background:#1f2937;border-radius:14px;padding:18px;margin:16px 0}
+    input,select,button{box-sizing:border-box;width:100%;padding:12px;margin:7px 0;border-radius:8px;border:1px solid #4b5563;font:inherit}
+    button{background:#2563eb;color:white;border:0;font-weight:700} button:disabled{opacity:.5}
+    pre{white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:#9ca3af}.ok{color:#6ee7b7}.error{color:#fca5a5}
+  </style>
+</head>
+<body>
+  <h1>YT Summary Remote</h1>
+  <p class="muted">The Linux box processes the video using its signed-in desktop browser.</p>
+  <form id="form">
+    <label>YouTube URL or video ID</label>
+    <input id="video" required placeholder="https://youtu.be/dQw4w9WgXcQ">
+    <label>Summary level</label>
+    <select id="level">
+      <option value="legacy">Legacy/default</option>
+      <option value="ultra">Ultra</option><option value="max">Maximum</option>
+      <option value="reg">Regular</option><option value="min">Minimum</option>
+      <option value="micro">Micro</option><option value="full">Full</option>
+    </select>
+    <button id="submit">Create summary</button>
+  </form>
+  <section>
+    <strong id="state">Ready</strong>
+    <pre id="log" class="muted"></pre>
+    <pre id="result"></pre>
+  </section>
+  <script>
+    const token = new URLSearchParams(location.search).get('token') || localStorage.ytSummaryToken || '';
+    if (token) localStorage.ytSummaryToken = token;
+    const auth = {Authorization:`Bearer ${token}`};
+    const el = id => document.getElementById(id);
+    function videoId(value) {
+      value = value.trim();
+      const direct = /^[A-Za-z0-9_-]{11}$/.exec(value);
+      if (direct) return direct[0];
+      try {
+        const u = new URL(value);
+        const candidate = u.hostname === 'youtu.be' ? u.pathname.slice(1) :
+          u.searchParams.get('v') || u.pathname.match(/\/(?:shorts|embed)\/([A-Za-z0-9_-]{11})/)?.[1];
+        if (/^[A-Za-z0-9_-]{11}$/.test(candidate || '')) return candidate;
+      } catch {}
+      throw new Error('Enter a valid YouTube URL or 11-character video ID.');
+    }
+    async function poll(jobId) {
+      const response = await fetch(`/status?jobId=${encodeURIComponent(jobId)}`, {headers:auth});
+      const job = await response.json();
+      if (!response.ok) throw new Error(job.error || `HTTP ${response.status}`);
+      el('state').textContent = `State: ${job.state}`;
+      el('state').className = job.state === 'done' ? 'ok' : job.state === 'error' ? 'error' : '';
+      el('log').textContent = job.log.join('\n');
+      if (job.state === 'done') {
+        el('result').textContent = job.result.text;
+        el('submit').disabled = false;
+      } else if (job.state === 'error') {
+        el('result').textContent = job.error;
+        el('submit').disabled = false;
+      } else setTimeout(() => poll(jobId).catch(showError), 1500);
+    }
+    function showError(error) {
+      el('state').textContent = 'Error';
+      el('state').className = 'error';
+      el('result').textContent = error.message;
+      el('submit').disabled = false;
+    }
+    el('form').addEventListener('submit', async event => {
+      event.preventDefault(); el('submit').disabled = true; el('result').textContent = '';
+      try {
+        const response = await fetch('/run', {
+          method:'POST', headers:{...auth,'Content-Type':'application/json'},
+          body:JSON.stringify({videoId:videoId(el('video').value),level:el('level').value})
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+        poll(body.jobId).catch(showError);
+      } catch (error) { showError(error); }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+[Unit]
+Description=YT Summary remote Linux service
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+User=REPLACE_WITH_LINUX_USERNAME
+WorkingDirectory=REPLACE_WITH_ABSOLUTE_FOLDER_PATH
+Environment=YT_SUMMARY_TOKEN=REPLACE_WITH_LONG_RANDOM_SECRET
+ExecStart=/usr/bin/node REPLACE_WITH_ABSOLUTE_FOLDER_PATH/start.js --port 8787
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
