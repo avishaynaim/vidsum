@@ -329,6 +329,7 @@
     el('div', { className: 'viewer-head' }, el('div', {}, el('h2', {}, 'Search in summaries'),
       el('p', { className: 'muted' }, 'Finds the words in every summary and part, ignoring Hebrew vowel marks.')), closeSearch),
     el('div', { className: 'search-body' },
+      savedBlock,
       el('div', { className: 'row search-form' }, searchQuery, contextSelect, searchGo),
       el('div', { className: 'row search-not' }, notInput, notAdd, notChips),
       el('div', { className: 'row search-scope' }, scopeSummary, scopeToggle),
@@ -403,6 +404,122 @@
     return block;
   }
 
+  // ---- Saved searches: filters + the results as they were saved ----
+  let currentSaved = null; // { id, name } of the saved search the form was loaded from
+  const savedList = el('div', { className: 'saved-list' });
+  const savedCount = el('span', { className: 'muted' });
+  const savedBlock = el('details', { className: 'saved-searches', hidden: true },
+    el('summary', {}, el('b', {}, 'Saved searches '), savedCount), savedList);
+
+  const filterText = (entry) => [`"${entry.query}"`, ...(entry.exclude || []).map((x) => `not "${x}"`)].join(', ') +
+    (entry.jobIds ? ` · in ${plural(entry.jobIds.length, 'chosen video')}` : ' · all videos');
+
+  function setFilters(entry) {
+    searchQuery.value = entry.query;
+    excludes.splice(0, excludes.length, ...(entry.exclude || []));
+    renderNots();
+    contextSelect.value = String(entry.contextWords ?? 30);
+    scope = entry.jobIds ? new Set(entry.jobIds) : null;
+    renderScope();
+  }
+
+  async function loadSaved() {
+    try {
+      const { searches } = await api('/api/searches');
+      savedBlock.hidden = searches.length === 0;
+      savedCount.textContent = `(${searches.length})`;
+      savedList.replaceChildren(...searches.map((entry) => {
+        const open = el('button', { type: 'button' }, 'Open');
+        open.addEventListener('click', async () => {
+          try {
+            const full = await post('/api/searches/get', { id: entry.id });
+            setFilters(full);
+            currentSaved = { id: full.id, name: full.name };
+            renderResults(full.results, { savedAt: full.savedAt, name: full.name });
+          } catch (error) { searchResults.replaceChildren(el('p', { className: 'muted' }, error.message)); }
+        });
+        const again = el('button', { type: 'button', className: 'primary' }, 'Run again');
+        again.addEventListener('click', () => { setFilters(entry); currentSaved = { id: entry.id, name: entry.name }; runSearch(); });
+        const remove = el('button', { type: 'button' }, 'Delete');
+        remove.addEventListener('click', async () => {
+          if (!confirm(`Delete the saved search "${entry.name}"?`)) return;
+          try {
+            await post('/api/searches/delete', { id: entry.id });
+            if (currentSaved && currentSaved.id === entry.id) currentSaved = null;
+            loadSaved();
+          } catch (error) { searchResults.replaceChildren(el('p', { className: 'muted' }, error.message)); }
+        });
+        return el('div', { className: 'saved-row' },
+          el('div', { className: 'saved-name', dir: 'auto' }, entry.name),
+          el('p', { className: 'muted', dir: 'auto' }, filterText(entry)),
+          el('p', { className: 'muted' }, `${plural(entry.matches, 'match', 'matches')} in ${plural(entry.videos, 'video')} · saved ${new Date(entry.savedAt).toLocaleString()}`),
+          el('div', { className: 'row source-actions' }, open, again, remove));
+      }));
+    } catch { /* offline */ }
+  }
+
+  async function saveCurrent({ update = false } = {}) {
+    const query = searchQuery.value.trim();
+    const suggested = update && currentSaved ? currentSaved.name
+      : [query, ...excludes.map((x) => `not "${x}"`)].join(', ');
+    const name = update ? suggested : prompt('Name for this saved search:', suggested);
+    if (name === null) return;
+    try {
+      const saved = await post('/api/searches/save', {
+        name, query, exclude: excludes, contextWords: Number(contextSelect.value),
+        ...(scope ? { jobIds: [...scope] } : {}), ...(update && currentSaved ? { id: currentSaved.id } : {}),
+      });
+      currentSaved = { id: saved.id, name: saved.name };
+      savedNote.textContent = update ? `Updated "${saved.name}".` : `Saved as "${saved.name}".`;
+      loadSaved();
+      savedBlock.open = true;
+    } catch (error) {
+      savedNote.textContent = `Could not save: ${error.message}`;
+    }
+  }
+  const savedNote = el('span', { className: 'muted', role: 'status' });
+
+  // Shows a result set; `saved` = { savedAt, name } when it is a stored snapshot.
+  function renderResults(r, saved = null) {
+    const nots = (r.exclude || []).length ? `, not ${r.exclude.map((x) => `"${x}"`).join(', ')}` : '';
+    const header = [];
+    if (saved) {
+      header.push(el('p', { className: 'saved-banner', dir: 'auto' },
+        `Saved search "${saved.name}", results as of ${new Date(saved.savedAt).toLocaleString()}. Use Run again for current results.`));
+    } else {
+      const actions = el('div', { className: 'row source-actions' });
+      const save = el('button', { type: 'button' }, '💾 Save this search');
+      save.addEventListener('click', () => saveCurrent());
+      actions.append(save);
+      if (currentSaved) {
+        const update = el('button', { type: 'button' }, `Update "${currentSaved.name}"`);
+        update.addEventListener('click', () => saveCurrent({ update: true }));
+        actions.append(update);
+      }
+      savedNote.textContent = '';
+      actions.append(savedNote);
+      header.push(actions);
+    }
+    if (!r.results.length) {
+      searchResults.replaceChildren(...header, el('p', { className: 'muted' }, `No matches for "${r.query}"${nots} in ${plural(r.searched, 'video')}.`));
+      return;
+    }
+    searchResults.replaceChildren(
+      ...header,
+      el('p', { className: 'search-count' }, `${plural(r.matches, 'match', 'matches')} for "${r.query}"${nots} in ${plural(r.results.length, 'video')} (searched ${r.searched})`),
+      ...r.results.map((video) => {
+        const title = el('button', { type: 'button', className: 'hit-video-title', dir: 'auto' }, video.title || video.videoId);
+        const first = video.sections[0];
+        title.addEventListener('click', () => openViewer(video.id, {
+          ranges: Object.fromEntries(video.sections.map((sec) => [sec.key, sec.ranges])), key: first.key, hit: 0,
+        }));
+        const when = video.createdAt ? new Date(video.createdAt).toLocaleDateString() : '';
+        return el('section', { className: 'hit-video' }, title,
+          el('p', { className: 'muted' }, `${plural(video.matchCount, 'match', 'matches')} · ${when} · \u2068${video.sourceTitle || 'Single video'}\u2069`),
+          ...video.sections.flatMap((section) => section.passages.map((passage) => passageBlock(video, section, passage))));
+      }));
+  }
+
   async function runSearch() {
     const query = searchQuery.value.trim();
     if (query.length < 2) { searchResults.replaceChildren(el('p', { className: 'muted' }, 'Type at least 2 letters.')); return; }
@@ -413,24 +530,7 @@
       const r = await post('/api/search', {
         query, exclude: excludes, contextWords: Number(contextSelect.value), ...(scope ? { jobIds: [...scope] } : {}),
       });
-      const nots = excludes.length ? `, not ${excludes.map((x) => `"${x}"`).join(', ')}` : '';
-      if (!r.results.length) {
-        searchResults.replaceChildren(el('p', { className: 'muted' }, `No matches for "${query}"${nots} in ${plural(r.searched, 'video')}.`));
-        return;
-      }
-      searchResults.replaceChildren(
-        el('p', { className: 'search-count' }, `${plural(r.matches, 'match', 'matches')} for "${query}"${nots} in ${plural(r.results.length, 'video')} (searched ${r.searched})`),
-        ...r.results.map((video) => {
-          const title = el('button', { type: 'button', className: 'hit-video-title', dir: 'auto' }, video.title || video.videoId);
-          const first = video.sections[0];
-          title.addEventListener('click', () => openViewer(video.id, {
-            ranges: Object.fromEntries(video.sections.map((sec) => [sec.key, sec.ranges])), key: first.key, hit: 0,
-          }));
-          const when = video.createdAt ? new Date(video.createdAt).toLocaleDateString() : '';
-          return el('section', { className: 'hit-video' }, title,
-            el('p', { className: 'muted' }, `${plural(video.matchCount, 'match', 'matches')} · ${when} · \u2068${video.sourceTitle || 'Single video'}\u2069`),
-            ...video.sections.flatMap((section) => section.passages.map((passage) => passageBlock(video, section, passage))));
-        }));
+      renderResults(r);
     } catch (error) {
       searchResults.replaceChildren(el('p', { className: 'muted' }, `Search failed: ${error.message}`));
     } finally {
@@ -439,6 +539,7 @@
   }
   searchGo.addEventListener('click', runSearch);
   searchQuery.addEventListener('keydown', (event) => { if (event.key === 'Enter') runSearch(); });
+  searchQuery.addEventListener('input', () => { currentSaved = null; });
   contextSelect.addEventListener('change', () => { if (searchQuery.value.trim().length >= 2) runSearch(); });
 
   const searchButton = el('button', { id: 'topbar-search', type: 'button', title: 'Search in all summaries' }, '🔍 Search');
@@ -446,6 +547,7 @@
     if (!searchDialog.open) searchDialog.showModal();
     searchQuery.focus();
     try { await loadSearchVideos(); } catch (error) { scopeSummary.textContent = error.message; }
+    loadSaved();
   });
 
   // Tapping anywhere on a tile except its own buttons/links/menus opens the viewer.

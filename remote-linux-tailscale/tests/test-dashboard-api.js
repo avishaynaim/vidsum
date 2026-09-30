@@ -458,6 +458,32 @@ async function testSearch() {
   assert.strictEqual(r.matches, 1, 'the API applies "not" phrases (only "עוד לולב כאן" is left)');
   assert.deepStrictEqual(r.exclude, ['על הלולב']);
   await assert.rejects(handleApi(scheduler, 'POST', '/api/search', { query: 'a' }), (e) => e.status === 400);
+
+  // Saved searches keep the filters and the results as they were.
+  const saved = await handleApi(scheduler, 'POST', '/api/searches/save',
+    { query: 'לולב', exclude: ['על הלולב'], contextWords: 20, jobIds: [a.Id, b.Id] });
+  assert.strictEqual(saved.name, 'לולב, not "על הלולב"', 'a default name from the filters');
+  assert.deepStrictEqual({ matches: saved.matches, videos: saved.videos, context: saved.contextWords, ids: saved.jobIds.length },
+    { matches: 1, videos: 1, context: 20, ids: 2 });
+  assert.strictEqual(saved.results, undefined, 'the save answer is a summary, not the whole result set');
+  let { searches } = await handleApi(scheduler, 'GET', '/api/searches', null);
+  assert.strictEqual(searches.length, 1);
+  assert.strictEqual(searches[0].results, undefined, 'the list stays light');
+  const full = await handleApi(scheduler, 'POST', '/api/searches/get', { id: saved.id });
+  assert.strictEqual(full.results.results[0].videoId, 'BBBBBBBBBBB', 'opening shows the stored results');
+
+  // Update in place (same id, new name/results) and save another.
+  const updated = await handleApi(scheduler, 'POST', '/api/searches/save', { id: saved.id, name: 'Lulav only', query: 'לולב' });
+  assert.deepStrictEqual({ id: updated.id, name: updated.name, matches: updated.matches }, { id: saved.id, name: 'Lulav only', matches: 3 });
+  await handleApi(scheduler, 'POST', '/api/searches/save', { query: 'אתרוג' });
+  ({ searches } = await handleApi(scheduler, 'GET', '/api/searches', null));
+  assert.strictEqual(searches.length, 2);
+
+  await handleApi(scheduler, 'POST', '/api/searches/delete', { id: saved.id });
+  ({ searches } = await handleApi(scheduler, 'GET', '/api/searches', null));
+  assert.deepStrictEqual(searches.map((x) => x.query), ['אתרוג']);
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/searches/get', { id: saved.id }), (e) => e.status === 409);
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/searches/save', { id: saved.id, query: 'לולב' }), (e) => e.status === 409);
 }
 
 async function testBrowserRecycling() {

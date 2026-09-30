@@ -140,6 +140,38 @@ class JobStore {
     atomicWrite(path.join(this.dir, 'sources.json'), JSON.stringify(sources));
   }
 
+  // Saved searches: searches/<id>.json holds the filters and the results as they were saved.
+  searchesDir() {
+    const dir = path.join(this.dir, 'searches');
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return dir;
+  }
+
+  listSearches() {
+    const dir = this.searchesDir();
+    return fs.readdirSync(dir).filter((f) => /^[0-9a-f-]{36}\.json$/.test(f)).map((f) => {
+      try {
+        const { results, ...entry } = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        return entry;
+      } catch { return null; }
+    }).filter(Boolean).sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)));
+  }
+
+  getSearch(id) {
+    if (typeof id !== 'string' || !GUID.test(id)) throw new ApiError(400, 'A valid saved search id is required.');
+    try { return JSON.parse(fs.readFileSync(path.join(this.searchesDir(), `${id}.json`), 'utf8')); }
+    catch { throw new ApiError(409, 'That saved search no longer exists.'); }
+  }
+
+  saveSearch(entry) {
+    atomicWrite(path.join(this.searchesDir(), `${entry.id}.json`), JSON.stringify(entry));
+  }
+
+  deleteSearch(id) {
+    this.getSearch(id);
+    fs.rmSync(path.join(this.searchesDir(), `${id}.json`), { force: true });
+  }
+
   loadSettings() {
     const defaults = { summaryLevel: 'ultra', enabledProviders: [...PROVIDERS], keepIntermediateTabs: false };
     try {
@@ -867,6 +899,31 @@ class Scheduler {
     return { query, exclude, contextWords, searched: videos.length, matches, results };
   }
 
+  // body: the search's own fields (query, exclude, contextWords, jobIds?) + name, and id to
+  // update an existing saved search. The search runs now and its results are stored with it.
+  saveSearchEntry(body) {
+    const results = this.search(body);
+    const name = typeof body.name === 'string' && body.name.trim()
+      ? body.name.trim().slice(0, 120)
+      : [results.query, ...results.exclude.map((x) => `not "${x}"`)].join(', ');
+    let id = crypto.randomUUID();
+    let createdAt = now();
+    if (body.id !== undefined) {
+      const previous = this.store.getSearch(body.id); // throws if it is gone
+      id = previous.id;
+      createdAt = previous.createdAt || createdAt;
+    }
+    const entry = {
+      id, name, createdAt, savedAt: now(),
+      query: results.query, exclude: results.exclude, contextWords: results.contextWords,
+      jobIds: Array.isArray(body.jobIds) ? body.jobIds.filter((x) => typeof x === 'string') : null,
+      searched: results.searched, matches: results.matches, videos: results.results.length, results,
+    };
+    this.store.saveSearch(entry);
+    const { results: omitted, ...summary } = entry;
+    return summary;
+  }
+
   saveSettings(body) {
     const next = { ...this.settings };
     let valid = false;
@@ -903,6 +960,7 @@ class Scheduler {
 async function handleApi(scheduler, method, pathname, body) {
   if (method === 'GET' && pathname === '/api/status') return scheduler.status();
   if (method === 'GET' && pathname === '/api/search/videos') return { videos: scheduler.searchableVideos() };
+  if (method === 'GET' && pathname === '/api/searches') return { searches: scheduler.store.listSearches() };
   if (method === 'GET' && pathname === '/api/sources') return { sources: scheduler.store.loadSources() };
   if (method !== 'POST') throw new ApiError(404, 'Unknown endpoint.');
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ApiError(400, 'A JSON object is required.');
@@ -923,6 +981,9 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/details': return scheduler.details(body.jobId);
     case '/api/import': return scheduler.importList(body);
     case '/api/search': return scheduler.search(body);
+    case '/api/searches/save': return scheduler.saveSearchEntry(body);
+    case '/api/searches/get': return scheduler.store.getSearch(body.id);
+    case '/api/searches/delete': scheduler.store.deleteSearch(body.id); return { deleted: true };
     case '/api/browser/restart':
       if (!scheduler.recycleBrowser) throw new ApiError(501, 'Browser restart is not available on this server.');
       if (scheduler.current || scheduler.recycling) throw new ApiError(409, 'A video is running (or a restart is underway). Try again when it finishes.');

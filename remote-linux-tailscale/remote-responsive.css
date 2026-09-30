@@ -205,3 +205,12 @@ mark.search-hit.current { background: #ff9f1c; outline: 2px solid #fff; }
   border: 1px solid var(--bad); color: var(--bad); font-size: 13px; font-weight: 700; unicode-bidi: plaintext;
 }
 #search-dialog .not-remove { padding: 0 7px; border: 0; background: none; color: inherit; min-height: 0; font-size: 12px; }
+
+/* Saved searches */
+#search-dialog .saved-searches { border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; background: var(--panel-2); }
+#search-dialog .saved-searches > summary { cursor: pointer; padding: 4px 0; }
+#search-dialog .saved-list { display: grid; gap: 8px; margin-top: 8px; }
+#search-dialog .saved-row { border-top: 1px solid var(--line-soft); padding-top: 8px; }
+#search-dialog .saved-row > * + * { margin-top: 4px; }
+#search-dialog .saved-name { font-weight: 750; unicode-bidi: plaintext; overflow-wrap: anywhere; }
+#search-dialog .saved-banner { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 12px; color: var(--accent); font-weight: 650; unicode-bidi: plaintext; }
