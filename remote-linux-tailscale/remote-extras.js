@@ -185,7 +185,22 @@
   rail.addEventListener('pointerup', endDrag);
   rail.addEventListener('pointercancel', endDrag);
 
-  function textBlock(label, entry, open = true) {
+  // Text with the given [start, end) ranges wrapped in <mark data-hit="i">.
+  function highlightedText(text, ranges = []) {
+    const nodes = [];
+    let at = 0;
+    ranges.forEach(([start, end], index) => {
+      if (start < at) return;
+      const mark = el('mark', { className: 'search-hit' }, text.slice(start, end));
+      mark.dataset.hit = String(index);
+      nodes.push(text.slice(at, start), mark);
+      at = end;
+    });
+    nodes.push(text.slice(at));
+    return nodes;
+  }
+
+  function textBlock(label, entry, open = true, key = '', ranges = []) {
     const copy = el('button', { type: 'button' }, 'Copy');
     copy.addEventListener('click', async (event) => {
       event.preventDefault();
@@ -199,10 +214,14 @@
         `Open in ${entry.provider || 'the AI site'}`));
     }
     const heading = el('summary', {}, el('b', {}, label), entry.provider ? el('span', { className: 'muted' }, ` · ${entry.provider}`) : '', actions);
-    return el('details', { className: 'viewer-section', open }, heading, el('div', { className: 'viewer-text', dir: 'auto' }, entry.text));
+    const section = el('details', { className: 'viewer-section', open }, heading,
+      el('div', { className: 'viewer-text', dir: 'auto' }, ...highlightedText(entry.text, ranges)));
+    section.dataset.key = key;
+    return section;
   }
 
-  async function openViewer(jobId) {
+  // focus (from search): { ranges: { sectionKey: [[s, e]...] }, key, hit } scrolls to one match.
+  async function openViewer(jobId, focus = null) {
     viewerTitle.textContent = 'Loading…';
     viewerMeta.textContent = '';
     viewerBody.replaceChildren();
@@ -217,18 +236,191 @@
           ? el('a', { href: d.source.url, target: '_blank', rel: 'noopener noreferrer', dir: 'auto' }, `From ${d.source.kind}: ${d.source.title}`)
           : 'Single video');
       const blocks = [];
-      if (d.final) blocks.push(textBlock('Final summary', d.final, true));
-      d.parts.forEach((part) => blocks.push(textBlock(`Part ${part.index} of ${Math.max(d.parts.length, part.index)}`, part, !d.final)));
+      const hits = (key) => (focus && focus.ranges && focus.ranges[key]) || [];
+      if (d.final) blocks.push(textBlock('Final summary', d.final, true, 'final', hits('final')));
+      d.parts.forEach((part) => {
+        const key = `part-${part.index}`;
+        blocks.push(textBlock(`Part ${part.index} of ${Math.max(d.parts.length, part.index)}`, part, !d.final || hits(key).length > 0, key, hits(key)));
+      });
       if (!blocks.length) blocks.push(el('p', { className: 'muted' }, `No summary yet. ${d.message || ''}`));
       else if (!d.final) blocks.unshift(el('p', { className: 'muted' }, `Still working: ${d.message || ''} Parts finished so far are below.`));
       viewerBody.replaceChildren(...blocks);
       viewerBody.scrollTop = 0;
+      if (focus && focus.key) {
+        const section = viewerBody.querySelector(`.viewer-section[data-key="${focus.key}"]`);
+        const mark = section && section.querySelector(`mark[data-hit="${focus.hit || 0}"]`);
+        if (section) section.open = true;
+        if (mark) {
+          mark.classList.add('current');
+          requestAnimationFrame(() => mark.scrollIntoView({ block: 'center' }));
+        }
+      }
       requestAnimationFrame(updateRail);
     } catch (error) {
       viewerTitle.textContent = 'Could not load this summary';
       viewerBody.replaceChildren(el('p', { className: 'muted' }, error.message));
     }
   }
+
+  // ---- Search in all summaries (🔍 in the top bar) ----
+  const SCOPE_KEY = 'yt-summary-search-scope';
+  let searchVideos = [];
+  let scope = null; // null = all videos; otherwise a Set of job ids
+  try {
+    const saved = JSON.parse(localStorage.getItem(SCOPE_KEY) || 'null');
+    if (saved && Array.isArray(saved.ids)) scope = new Set(saved.ids);
+  } catch { /* default: all */ }
+  const saveScope = () => {
+    try { localStorage.setItem(SCOPE_KEY, JSON.stringify(scope ? { ids: [...scope] } : { all: true })); } catch { /* private mode */ }
+  };
+
+  const searchDialog = el('dialog', { id: 'search-dialog' });
+  const searchQuery = el('input', { type: 'search', dir: 'auto', placeholder: 'Word or phrase, Hebrew or English', enterKeyHint: 'search', autocomplete: 'off' });
+  const contextSelect = el('select', { title: 'Words shown before and after each match' },
+    ...[10, 20, 30, 50, 100].map((n) => el('option', { value: String(n), selected: n === 30 }, `${n} words around`)));
+  const searchGo = el('button', { type: 'button', className: 'primary' }, 'Search');
+  const scopeSummary = el('span', { className: 'scope-summary' });
+  const scopeToggle = el('button', { type: 'button' }, 'Choose videos');
+  const scopeList = el('div', { className: 'scope-list' });
+  const scopeFilter = el('input', { type: 'search', dir: 'auto', placeholder: 'Filter this list by title or channel' });
+  const scopeSource = el('select', {});
+  const quick = (label, pick) => {
+    const b = el('button', { type: 'button' }, label);
+    b.addEventListener('click', () => { pick(); renderScope(); });
+    return b;
+  };
+  const dayAgo = (days) => Date.now() - days * 86400000;
+  const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const scopePicker = el('div', { className: 'scope-picker', hidden: true },
+    el('div', { className: 'row scope-quick' },
+      quick('All', () => { scope = null; }),
+      quick('None', () => { scope = new Set(); }),
+      quick('Today', () => { scope = new Set(searchVideos.filter((v) => Date.parse(v.createdAt) >= startOfToday()).map((v) => v.id)); }),
+      quick('Last 7 days', () => { scope = new Set(searchVideos.filter((v) => Date.parse(v.createdAt) >= dayAgo(7)).map((v) => v.id)); }),
+      scopeSource),
+    scopeFilter, scopeList);
+  const searchResults = el('div', { className: 'search-results' });
+  const closeSearch = el('button', { className: 'viewer-close', type: 'button', ariaLabel: 'Close' }, '✕');
+  closeSearch.addEventListener('click', () => searchDialog.close());
+  searchDialog.addEventListener('click', (event) => { if (event.target === searchDialog) searchDialog.close(); });
+  searchDialog.append(
+    el('div', { className: 'viewer-head' }, el('div', {}, el('h2', {}, 'Search in summaries'),
+      el('p', { className: 'muted' }, 'Finds the words in every summary and part, ignoring Hebrew vowel marks.')), closeSearch),
+    el('div', { className: 'search-body' },
+      el('div', { className: 'row search-form' }, searchQuery, contextSelect, searchGo),
+      el('div', { className: 'row search-scope' }, scopeSummary, scopeToggle),
+      scopePicker, searchResults));
+
+  const inScope = (id) => !scope || scope.has(id);
+  function renderScope() {
+    const chosen = searchVideos.filter((v) => inScope(v.id)).length;
+    scopeSummary.textContent = !scope ? `Searching all ${plural(searchVideos.length, 'video')}` : `Searching ${chosen} of ${plural(searchVideos.length, 'video')}`;
+    const words = scopeFilter.value.trim().toLowerCase();
+    const shown = searchVideos.filter((v) => !words || `${v.title} ${v.videoId} ${v.sourceTitle}`.toLowerCase().includes(words));
+    scopeList.replaceChildren(...shown.map((v) => {
+      const box = el('input', { type: 'checkbox', checked: inScope(v.id) });
+      box.addEventListener('change', () => {
+        if (!scope) scope = new Set(searchVideos.map((x) => x.id));
+        if (box.checked) scope.add(v.id); else scope.delete(v.id);
+        if (scope.size === searchVideos.length) scope = null;
+        saveScope();
+        renderScope();
+      });
+      const when = v.createdAt ? new Date(v.createdAt).toLocaleDateString() : '';
+      return el('label', { className: 'scope-item' }, box,
+        el('span', { dir: 'auto', className: 'scope-title' }, v.title || v.videoId),
+        el('span', { className: 'muted' }, `${v.sourceTitle || 'Single video'} · ${when}`));
+    }));
+    saveScope();
+  }
+  scopeFilter.addEventListener('input', renderScope);
+  scopeToggle.addEventListener('click', () => {
+    scopePicker.hidden = !scopePicker.hidden;
+    scopeToggle.textContent = scopePicker.hidden ? 'Choose videos' : 'Done choosing';
+  });
+  scopeSource.addEventListener('change', () => {
+    const value = scopeSource.value;
+    if (value === '__all') scope = null;
+    else scope = new Set(searchVideos.filter((v) => (value === '__single' ? !v.sourceTitle : v.sourceTitle === value)).map((v) => v.id));
+    scopeSource.value = '';
+    renderScope();
+  });
+
+  async function loadSearchVideos() {
+    const { videos } = await api('/api/search/videos');
+    searchVideos = videos;
+    if (scope) scope = new Set([...scope].filter((id) => videos.some((v) => v.id === id)));
+    const sourceNames = [...new Set(videos.map((v) => v.sourceTitle).filter(Boolean))];
+    scopeSource.replaceChildren(
+      el('option', { value: '' }, 'Only a channel / playlist…'),
+      el('option', { value: '__all' }, 'All sources'),
+      ...sourceNames.map((name) => el('option', { value: name }, name)),
+      el('option', { value: '__single' }, 'Single videos'));
+    renderScope();
+  }
+
+  function passageBlock(video, section, passage) {
+    const ranges = Object.fromEntries(video.sections.map((sec) => [sec.key, sec.ranges]));
+    const body = el('div', { className: 'hit-text', dir: 'auto' });
+    let at = 0;
+    const parts = [];
+    passage.highlights.forEach(([start, end], i) => {
+      const hit = passage.rangeIndexes[i];
+      const mark = el('mark', { className: 'search-hit' }, passage.text.slice(start, end));
+      mark.addEventListener('click', (event) => { event.stopPropagation(); openViewer(video.id, { ranges, key: section.key, hit }); });
+      parts.push(passage.text.slice(at, start), mark);
+      at = end;
+    });
+    parts.push(passage.text.slice(at));
+    body.append(passage.clippedBefore ? '… ' : '', ...parts, passage.clippedAfter ? ' …' : '');
+    const block = el('div', { className: 'hit' },
+      el('span', { className: 'hit-where' }, `${section.label}${section.provider ? ` · ${section.provider}` : ''}` +
+        (passage.rangeIndexes.length > 1 ? ` · ${passage.rangeIndexes.length} matches` : '')), body);
+    block.addEventListener('click', () => openViewer(video.id, { ranges, key: section.key, hit: passage.rangeIndexes[0] }));
+    return block;
+  }
+
+  async function runSearch() {
+    const query = searchQuery.value.trim();
+    if (query.length < 2) { searchResults.replaceChildren(el('p', { className: 'muted' }, 'Type at least 2 letters.')); return; }
+    if (scope && scope.size === 0) { searchResults.replaceChildren(el('p', { className: 'muted' }, 'No videos are chosen. Use "Choose videos" or All.')); return; }
+    searchGo.disabled = true;
+    searchResults.replaceChildren(el('p', { className: 'muted' }, 'Searching…'));
+    try {
+      const r = await post('/api/search', { query, contextWords: Number(contextSelect.value), ...(scope ? { jobIds: [...scope] } : {}) });
+      if (!r.results.length) {
+        searchResults.replaceChildren(el('p', { className: 'muted' }, `No matches for "${query}" in ${plural(r.searched, 'video')}.`));
+        return;
+      }
+      searchResults.replaceChildren(
+        el('p', { className: 'search-count' }, `${plural(r.matches, 'match', 'matches')} in ${plural(r.results.length, 'video')} (searched ${r.searched})`),
+        ...r.results.map((video) => {
+          const title = el('button', { type: 'button', className: 'hit-video-title', dir: 'auto' }, video.title || video.videoId);
+          const first = video.sections[0];
+          title.addEventListener('click', () => openViewer(video.id, {
+            ranges: Object.fromEntries(video.sections.map((sec) => [sec.key, sec.ranges])), key: first.key, hit: 0,
+          }));
+          const when = video.createdAt ? new Date(video.createdAt).toLocaleDateString() : '';
+          return el('section', { className: 'hit-video' }, title,
+            el('p', { className: 'muted' }, `${video.sourceTitle || 'Single video'} · ${when} · ${plural(video.matchCount, 'match', 'matches')}`),
+            ...video.sections.flatMap((section) => section.passages.map((passage) => passageBlock(video, section, passage))));
+        }));
+    } catch (error) {
+      searchResults.replaceChildren(el('p', { className: 'muted' }, `Search failed: ${error.message}`));
+    } finally {
+      searchGo.disabled = false;
+    }
+  }
+  searchGo.addEventListener('click', runSearch);
+  searchQuery.addEventListener('keydown', (event) => { if (event.key === 'Enter') runSearch(); });
+  contextSelect.addEventListener('change', () => { if (searchQuery.value.trim().length >= 2) runSearch(); });
+
+  const searchButton = el('button', { id: 'topbar-search', type: 'button', title: 'Search in all summaries' }, '🔍 Search');
+  searchButton.addEventListener('click', async () => {
+    if (!searchDialog.open) searchDialog.showModal();
+    searchQuery.focus();
+    try { await loadSearchVideos(); } catch (error) { scopeSummary.textContent = error.message; }
+  });
 
   // Tapping anywhere on a tile except its own buttons/links/menus opens the viewer.
   document.addEventListener('click', (event) => {
@@ -285,7 +477,7 @@
   });
   importBlock.append(sourcesBlock);
 
-  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
   function describeResult(r, level) {
     const what = r.kind === 'channel' ? 'channel' : 'playlist';
     const parts = [`Found ${plural(r.found, 'video')} in the ${what}${r.title ? ` "${r.title}"` : ''}: ${r.added} added`];
@@ -407,7 +599,9 @@
   importUrl.addEventListener('keydown', (event) => { if (event.key === 'Enter') importButton.click(); });
 
   mount();
-  document.body.append(viewer);
+  document.body.append(viewer, searchDialog);
+  const topState = document.querySelector('.topbar #state');
+  if (topState) topIp.before(searchButton);
   const addPanel = document.querySelector('section.panel:has(#batch)');
   if (addPanel) addPanel.append(importBlock);
   loadSources();

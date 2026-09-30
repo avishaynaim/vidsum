@@ -408,6 +408,48 @@ async function testNewVideoCounts() {
   assert.deepStrictEqual(peek.ids, ['P3xxxxxxxxx', 'P4xxxxxxxxx']);
 }
 
+async function testSearch() {
+  const { findMatches, buildPassages } = require('../search');
+  assert.strictEqual(findMatches('הַלּוּלָב והלולב', 'לולב').length, 2, 'vowel marks are ignored');
+  assert.strictEqual(findMatches('The  Lulav\nwas', 'lulav was').length, 1, 'case and whitespace are ignored');
+  const words = (n, p) => Array.from({ length: n }, (_, i) => `${p}${i}`).join(' ');
+  const text = `אתרוג ${words(40, 'a')} אתרוג ${words(10, 'b')} אתרוג ${words(100, 'c')} אתרוג`;
+  const passages = buildPassages(text, findMatches(text, 'אתרוג'), 30);
+  assert.deepStrictEqual(passages.map((p) => p.rangeIndexes), [[0, 1, 2], [3]], 'nearby matches merge; a far one stands alone');
+  assert.ok(passages[0].clippedAfter && !passages[0].clippedBefore && passages[1].clippedBefore);
+  assert.strictEqual(passages[0].text.split(' ').pop(), 'c29', 'the merged passage ends 30 words after its LAST match');
+
+  const fake = controllableRunner();
+  const store = new JobStore(tmpDir());
+  const scheduler = new Scheduler({ store, runner: fake.runner, fetchTitle: async () => '' });
+  const a = await add(scheduler, 'AAAAAAAAAAA', { title: 'First' });
+  await tick();
+  fake.pending.get('AAAAAAAAAAA').resolve({ text: 'הסיכום מדבר על הלולב', provider: 'Claude',
+    parts: [{ index: 1, provider: 'ChatGPT', text: 'חלק על הלולב והאתרוג', url: null }] });
+  await tick(); await tick();
+  const b = await add(scheduler, 'BBBBBBBBBBB', { title: 'Second' });
+  await tick();
+  fake.pending.get('BBBBBBBBBBB').resolve({ text: 'עוד לולב כאן', provider: 'Gemini' });
+  await tick(); await tick();
+  await add(scheduler, 'CCCCCCCCCCC'); // still running: no text, not searchable
+
+  const { videos } = await handleApi(scheduler, 'GET', '/api/search/videos', null);
+  assert.deepStrictEqual(videos.map((v) => v.videoId).sort(), ['AAAAAAAAAAA', 'BBBBBBBBBBB']);
+
+  let r = await handleApi(scheduler, 'POST', '/api/search', { query: 'לולב' });
+  assert.deepStrictEqual({ searched: r.searched, matches: r.matches, videos: r.results.length }, { searched: 2, matches: 3, videos: 2 });
+  assert.strictEqual(r.results[0].videoId, 'AAAAAAAAAAA', 'most matches first');
+  assert.deepStrictEqual(r.results[0].sections.map((x) => x.key), ['final', 'part-1']);
+  const hit = r.results[0].sections[0].passages[0];
+  assert.strictEqual(hit.text.slice(...hit.highlights[0]), 'לולב');
+
+  r = await handleApi(scheduler, 'POST', '/api/search', { query: 'לולב', jobIds: [b.Id] });
+  assert.deepStrictEqual(r.results.map((x) => x.videoId), ['BBBBBBBBBBB'], 'only the chosen videos are searched');
+  r = await handleApi(scheduler, 'POST', '/api/search', { query: 'אתרוג', jobIds: [a.Id, b.Id] });
+  assert.deepStrictEqual(r.results[0].sections.map((x) => x.key), ['part-1'], 'parts are searched too');
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/search', { query: 'a' }), (e) => e.status === 400);
+}
+
 module.exports = async function run() {
   await testLifecycle();
   await testFailuresAndRetries();
@@ -417,6 +459,7 @@ module.exports = async function run() {
   await testServerRoutes();
   await testImportList();
   await testNewVideoCounts();
+  await testSearch();
 };
 
 if (require.main === module) {

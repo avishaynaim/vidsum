@@ -790,6 +790,45 @@ class Scheduler {
     };
   }
 
+  // ---- Search in summaries ----
+
+  // Videos that have summary text to search (finished, or with finished parts).
+  searchableVideos() {
+    return [...this.store.jobs].reverse()
+      .filter((job) => job.FinalResult === 'local' || this.store.getParts(job).length)
+      .map((job) => ({
+        id: job.Id, videoId: job.VideoId, title: job.Title, level: job.SummaryLevel, state: job.State,
+        createdAt: job.CreatedAt, sourceKind: job.SourceKind || '', sourceTitle: job.SourceTitle || '',
+      }));
+  }
+
+  // body: { query, jobIds?: [...] (default: every searchable video), contextWords? }
+  search(body) {
+    const { searchSections, normalizeQuery, DEFAULT_CONTEXT_WORDS } = require('./search');
+    const query = typeof body.query === 'string' ? body.query : '';
+    if (normalizeQuery(query).length < 2) throw new ApiError(400, 'Type at least 2 letters to search.');
+    const contextWords = Math.min(200, Math.max(0, Math.floor(Number(body.contextWords ?? DEFAULT_CONTEXT_WORDS)) || 0));
+    const wanted = Array.isArray(body.jobIds) ? new Set(body.jobIds) : null;
+    const videos = this.searchableVideos().filter((v) => !wanted || wanted.has(v.id));
+    const results = [];
+    let matches = 0;
+    for (const video of videos) {
+      const d = this.details(video.id);
+      const sections = [];
+      if (d.final) sections.push({ key: 'final', label: 'Final summary', provider: d.final.provider, text: d.final.text });
+      for (const part of d.parts) {
+        sections.push({ key: `part-${part.index}`, label: `Part ${part.index} of ${d.parts.length}`, provider: part.provider, text: part.text });
+      }
+      const found = searchSections(sections, query, contextWords);
+      if (!found.length) continue;
+      const count = found.reduce((sum, section) => sum + section.ranges.length, 0);
+      matches += count;
+      results.push({ ...video, matchCount: count, sections: found });
+    }
+    results.sort((a, b) => b.matchCount - a.matchCount || String(b.createdAt).localeCompare(String(a.createdAt)));
+    return { query, contextWords, searched: videos.length, matches, results };
+  }
+
   saveSettings(body) {
     const next = { ...this.settings };
     let valid = false;
@@ -825,6 +864,7 @@ class Scheduler {
 // Routes one /api/* request. `body` is the parsed JSON object (POST) or null (GET).
 async function handleApi(scheduler, method, pathname, body) {
   if (method === 'GET' && pathname === '/api/status') return scheduler.status();
+  if (method === 'GET' && pathname === '/api/search/videos') return { videos: scheduler.searchableVideos() };
   if (method === 'GET' && pathname === '/api/sources') return { sources: scheduler.store.loadSources() };
   if (method !== 'POST') throw new ApiError(404, 'Unknown endpoint.');
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ApiError(400, 'A JSON object is required.');
@@ -844,6 +884,7 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
     case '/api/details': return scheduler.details(body.jobId);
     case '/api/import': return scheduler.importList(body);
+    case '/api/search': return scheduler.search(body);
     case '/api/sources/run': return scheduler.runSource(body.id, { labelOnly: body.labelOnly === true });
     case '/api/sources/run-all': return scheduler.runAllSources();
     case '/api/sources/peek': return body.id ? scheduler.peekSource(body.id) : scheduler.peekAllSources();
