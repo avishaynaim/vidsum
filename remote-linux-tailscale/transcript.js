@@ -247,4 +247,4 @@ async function fetchTranscriptDirect(videoId) {
   return { text, title, durationSeconds };
 }
 
-module.exports = { fetchTranscript, fetchTranscriptDirect, assertValidVideoId, chooseYtDlpTrack, findYtDlp };
+module.exports = { fetchTranscript, fetchTranscriptDirect, assertValidVideoId, chooseYtDlpTrack, findYtDlp, runYtDlp };

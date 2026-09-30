@@ -7,7 +7,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const required = [
   'start.js', 'server.js', 'simple.html', 'launch-chrome.js', 'net-guard.js', 'display.js',
-  'dashboard-api.js', 'remote-dashboard.js', 'remote-extras.js', 'remote-responsive.css',
+  'dashboard-api.js', 'remote-dashboard.js', 'remote-extras.js', 'remote-responsive.css', 'import-list.js',
   'cli.js', 'cdp.js', 'checkpoint.js', 'chunk.js', 'providers.json',
   'rejections.js', 'rotate.js', 'send.js', 'transcript.js',
   'setup.sh', 'yt-summary.service.example', 'yt-summary.user.service.example', 'AI-INSTRUCTIONS.md', 'README.md',

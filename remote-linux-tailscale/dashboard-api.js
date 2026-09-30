@@ -24,7 +24,9 @@ const TERMINAL = ['submitted', 'completed', 'error', 'needs-review', 'reviewed',
 const AUTO_RETRY_LIMIT = 2;
 const AUTO_RETRY_DELAY_MS = 2 * 60 * 1000;
 const MAX_UNFINISHED = 200;
-const HISTORY_KEEP = 100;
+// Finished jobs kept (the Windows helper keeps 100). Higher here: on the server the summary
+// text lives with the job, and one channel import can add 50 at once.
+const HISTORY_KEEP = 1000;
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
@@ -194,8 +196,10 @@ async function fetchOEmbedTitle(videoId) {
 
 class Scheduler {
   constructor({ store, runner, fetchTitle = fetchOEmbedTitle, browserReady = async () => true, attachRunner = null, log = () => {},
+    listVideos = (url, options) => require('./import-list').listVideos(url, options),
     loadCheckpoint = (videoId) => require('./checkpoint').loadCheckpoint(videoId) }) {
     this.loadCheckpoint = loadCheckpoint;
+    this.listVideos = listVideos;
     this.store = store;
     this.runner = runner;
     this.fetchTitle = fetchTitle;
@@ -331,6 +335,38 @@ class Scheduler {
     }
     this.pump();
     return job;
+  }
+
+  // "Add a playlist or channel": every video becomes its own job. A video that already has a
+  // job at this summary level is not processed again (enqueue returns the existing job).
+  async importList(body) {
+    const level = body.summaryLevel === undefined ? this.settings.summaryLevel : body.summaryLevel;
+    if (!LEVELS.includes(level)) throw new ApiError(400, 'Unknown summary level.');
+    if (typeof body.url !== 'string' || !body.url.trim()) throw new ApiError(400, 'Paste a YouTube playlist or channel link.');
+    let listed;
+    try {
+      listed = await this.listVideos(body.url, { limit: body.limit });
+    } catch (err) {
+      throw new ApiError(err.status || 502, err.status ? err.message : `Could not read that link: ${err.message}`);
+    }
+    const result = { kind: listed.kind, title: listed.title, found: listed.videos.length, added: 0, alreadyDone: 0, alreadyListed: 0, notAdded: 0, error: '' };
+    for (const video of listed.videos) {
+      const existing = this.store.jobs.find((j) => j.VideoId === video.videoId && j.SummaryLevel === level);
+      if (existing) {
+        if (existing.State === 'completed') result.alreadyDone++; else result.alreadyListed++;
+        continue;
+      }
+      try {
+        const job = this.enqueue({ videoId: video.videoId, requestId: crypto.randomUUID(), title: video.title, summaryLevel: level });
+        if (video.durationSeconds && !job.DurationSeconds) { job.DurationSeconds = video.durationSeconds; this.store.save(job); }
+        result.added++;
+      } catch (err) {
+        result.notAdded = listed.videos.length - result.added - result.alreadyDone - result.alreadyListed;
+        result.error = err.message;
+        break;
+      }
+    }
+    return result;
   }
 
   pump() {
@@ -662,6 +698,7 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/set-job-level': scheduler.setLevel(body.jobId, body.summaryLevel); return { updated: true };
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
     case '/api/details': return scheduler.details(body.jobId);
+    case '/api/import': return scheduler.importList(body);
     case '/api/result': return { finalResult: scheduler.store.getResult(scheduler.find(body.jobId)) };
     case '/api/clear-errors': return { cleared: scheduler.clearWhere((j) => j.State === 'error') };
     case '/api/clear-cancelled': return { cleared: scheduler.clearWhere((j) => ['cancelled', 'reviewed'].includes(j.State)) };

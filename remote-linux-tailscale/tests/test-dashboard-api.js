@@ -253,6 +253,71 @@ async function testServerRoutes() {
   }
 }
 
+async function testImportList() {
+  const { normalizeListUrl, listVideos } = require('../import-list');
+  assert.deepStrictEqual(normalizeListUrl('https://www.youtube.com/playlist?list=PLabc_123'),
+    { kind: 'playlist', url: 'https://www.youtube.com/playlist?list=PLabc_123' });
+  assert.strictEqual(normalizeListUrl('https://youtube.com/watch?v=AAAAAAAAAAA&list=PLxyz').kind, 'playlist', 'a video link inside a playlist means the playlist');
+  assert.deepStrictEqual(normalizeListUrl('https://www.youtube.com/@SomeChannel'), { kind: 'channel', url: 'https://www.youtube.com/@SomeChannel/videos' });
+  assert.strictEqual(normalizeListUrl('https://m.youtube.com/@SomeChannel/featured').url, 'https://www.youtube.com/@SomeChannel/videos');
+  assert.strictEqual(normalizeListUrl('https://www.youtube.com/channel/UCzfDH06s9l74j37DvqMUycg/streams').url,
+    'https://www.youtube.com/channel/UCzfDH06s9l74j37DvqMUycg/streams');
+  for (const bad of ['https://youtu.be/AAAAAAAAAAA', 'https://example.com/@x', 'not a link']) {
+    assert.throws(() => normalizeListUrl(bad), (e) => e.status === 400, bad);
+  }
+
+  let lastArgs;
+  const entries = [
+    { id: 'AAAAAAAAAAA', title: 'One', duration: 60 },
+    { id: 'BBBBBBBBBBB', title: 'Upcoming', live_status: 'is_upcoming' },
+    { id: 'AAAAAAAAAAA', title: 'Duplicate entry' },
+    { id: 'CCCCCCCCCCC', title: 'Three', duration: 3600.4 },
+    { id: 'DDDDDDDDDDD', title: 'Four' },
+  ];
+  const fakeYtDlp = async (args) => { lastArgs = args; return JSON.stringify({ title: 'My channel', entries }); };
+  const listed = await listVideos('https://www.youtube.com/@x', { limit: 2 }, { runYtDlp: fakeYtDlp });
+  assert.deepStrictEqual(listed.videos.map((v) => v.videoId), ['AAAAAAAAAAA', 'CCCCCCCCCCC'], 'latest N, skipping upcoming and repeats');
+  assert.strictEqual(listed.videos[1].durationSeconds, 3600);
+  assert.ok(lastArgs.includes('--flat-playlist') && lastArgs[lastArgs.indexOf('--playlist-end') + 1] === '22', 'extra entries so skipped streams do not reduce the count');
+  await listVideos('https://www.youtube.com/@x', { limit: 999 }, { runYtDlp: fakeYtDlp });
+  assert.strictEqual(lastArgs[lastArgs.indexOf('--playlist-end') + 1], '70', 'channels are capped at 50 (+20 spare)');
+  await listVideos('https://www.youtube.com/playlist?list=PLa', { limit: 1 }, { runYtDlp: fakeYtDlp });
+  assert.strictEqual(lastArgs[lastArgs.indexOf('--playlist-end') + 1], '200', 'a playlist takes all its videos (up to 200)');
+
+  // Import: each video its own job; one already summarized at this level is skipped.
+  const fake = controllableRunner();
+  const store = new JobStore(tmpDir());
+  const scheduler = new Scheduler({
+    store, runner: fake.runner, fetchTitle: async () => '',
+    listVideos: async () => ({ kind: 'channel', title: 'My channel', videos: [
+      { videoId: 'AAAAAAAAAAA', title: 'One', durationSeconds: 60 },
+      { videoId: 'CCCCCCCCCCC', title: 'Three', durationSeconds: 3600 },
+      { videoId: 'DDDDDDDDDDD', title: 'Four', durationSeconds: 0 },
+    ] }),
+  });
+  const done = await add(scheduler, 'AAAAAAAAAAA', { summaryLevel: 'reg' });
+  await tick();
+  fake.pending.get('AAAAAAAAAAA').resolve({ text: 'x', provider: 'Claude' });
+  await tick(); await tick();
+  assert.strictEqual(done.State, 'completed');
+  const other = await add(scheduler, 'DDDDDDDDDDD', { summaryLevel: 'reg' });
+
+  const result = await handleApi(scheduler, 'POST', '/api/import', { url: 'https://www.youtube.com/@x', limit: 5, summaryLevel: 'reg' });
+  assert.deepStrictEqual(
+    { found: result.found, added: result.added, alreadyDone: result.alreadyDone, alreadyListed: result.alreadyListed },
+    { found: 3, added: 1, alreadyDone: 1, alreadyListed: 1 });
+  const added = store.jobs.find((j) => j.VideoId === 'CCCCCCCCCCC');
+  assert.strictEqual(added.Title, 'Three');
+  assert.strictEqual(added.DurationSeconds, 3600);
+  assert.strictEqual(store.jobs.filter((j) => j.VideoId === 'AAAAAAAAAAA').length, 1, 'no second job for a summarized video');
+  assert.ok(other);
+
+  // A different level is a different summary, so it is added.
+  const ultra = await handleApi(scheduler, 'POST', '/api/import', { url: 'https://www.youtube.com/@x', limit: 5, summaryLevel: 'ultra' });
+  assert.strictEqual(ultra.added, 3);
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/import', { url: '' }), (e) => e.status === 400);
+}
+
 module.exports = async function run() {
   await testLifecycle();
   await testFailuresAndRetries();
@@ -260,6 +325,7 @@ module.exports = async function run() {
   testStatusMapping();
   testServedPage();
   await testServerRoutes();
+  await testImportList();
 };
 
 if (require.main === module) {

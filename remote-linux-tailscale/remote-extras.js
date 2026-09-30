@@ -57,6 +57,13 @@
       const names = Object.keys(status);
       loginList.replaceChildren(...names.map((name) => el('span', { className: 'provider-toggle' }, `${name} ${LOGIN_TEXT[status[name]] || status[name]}`)));
       const ready = names.filter((n) => status[n] === 'signed-in').length;
+      const checking = names.some((n) => ['loading', 'no-tab', 'unknown'].includes(status[n]));
+      if (checking && ready < names.length) {
+        loginSummary.textContent = 'Checking logins…';
+        loginSummary.style.color = 'var(--muted)';
+        setTimeout(refreshLogin, 4000); // pages still opening (e.g. just after a restart)
+        return;
+      }
       loginSummary.textContent = ready === 0
         ? 'Summaries will fail until you log in to at least one site.'
         : `${ready} of ${names.length} sites logged in.`;
@@ -168,8 +175,63 @@
     openViewer(card.dataset.jobId);
   });
 
+  // ---- Add a playlist or channel: each video becomes its own job. ----
+  const LEVEL_NAMES = { ultra: 'Ultra', max: 'Max', reg: 'Reg', min: 'Min', micro: 'Micro', full: 'Full' };
+  const importUrl = el('input', {
+    id: 'import-url', type: 'url', inputMode: 'url', autocomplete: 'off', spellcheck: false,
+    placeholder: 'https://www.youtube.com/playlist?list=…  or  https://www.youtube.com/@channel',
+  });
+  const importLimit = el('select', { id: 'import-limit' },
+    ...[1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50].map((n) => el('option', { value: String(n) }, String(n))));
+  const importLevel = el('select', { id: 'import-level' },
+    ...Object.entries(LEVEL_NAMES).map(([value, label]) => el('option', { value }, label)));
+  const importButton = el('button', { className: 'primary', type: 'button' }, 'Add all videos');
+  const importResult = el('p', { className: 'muted', role: 'status' });
+  const importBlock = el('div', { id: 'import-block' },
+    el('div', { className: 'panel-title' }, 'Add a playlist or channel'),
+    el('label', { className: 'field', htmlFor: 'import-url' }, 'Playlist link (all its videos) or channel link (its latest videos)'),
+    importUrl,
+    el('div', { className: 'import-options' },
+      el('label', { className: 'field' }, 'Latest videos from a channel', importLimit),
+      el('label', { className: 'field' }, 'Summary level', importLevel)),
+    el('div', { className: 'row' }, importButton),
+    importResult,
+    el('p', { className: 'muted' }, 'Each video gets its own summary. Videos already summarized at the same level are skipped.'));
+
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  importButton.addEventListener('click', async () => {
+    const url = importUrl.value.trim();
+    if (!url) { importResult.textContent = 'Paste a playlist or channel link first.'; return; }
+    importButton.disabled = true;
+    importResult.textContent = 'Reading the list from YouTube…';
+    try {
+      const response = await fetch('/api/import', {
+        method: 'POST', headers: { 'X-YT-Token': token(), 'Content-Type': 'application/json' }, cache: 'no-store',
+        body: JSON.stringify({ url, limit: Number(importLimit.value), summaryLevel: importLevel.value }),
+        signal: AbortSignal.timeout(120000),
+      });
+      const r = await response.json();
+      if (!response.ok) throw new Error(r.error || `Request failed (${response.status}).`);
+      const what = r.kind === 'channel' ? 'channel' : 'playlist';
+      const parts = [`Found ${plural(r.found, 'video')} in the ${what}${r.title ? ` "${r.title}"` : ''}: ${r.added} added`];
+      if (r.alreadyDone) parts.push(`${r.alreadyDone} already summarized at ${LEVEL_NAMES[importLevel.value]} (skipped)`);
+      if (r.alreadyListed) parts.push(`${r.alreadyListed} already in the list`);
+      if (r.notAdded) parts.push(`${r.notAdded} not added: ${r.error}`);
+      importResult.textContent = parts.join(', ') + '.';
+      if (r.added) importUrl.value = '';
+    } catch (error) {
+      importResult.textContent = `Could not add: ${error.message}`;
+    } finally {
+      importButton.disabled = false;
+    }
+  });
+  importUrl.addEventListener('keydown', (event) => { if (event.key === 'Enter') importButton.click(); });
+
   mount();
   document.body.append(viewer);
+  const addPanel = document.querySelector('section.panel:has(#batch)');
+  if (addPanel) addPanel.append(importBlock);
+  api('/api/status').then((status) => { if (LEVEL_NAMES[status.summaryLevel]) importLevel.value = status.summaryLevel; }).catch(() => {});
   api('/config').then((config) => {
     signInBlock.hidden = !config.signIn;
     ipBlock.hidden = !config.ipRotation;

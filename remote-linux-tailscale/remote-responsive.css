@@ -76,3 +76,14 @@
 
 /* Change-IP button in the sticky top bar. */
 #topbar-ip { padding: 4px 12px; border-radius: 999px; font-size: 12.5px; white-space: nowrap; }
+
+/* "Add a playlist or channel" block inside the Add videos panel. */
+#import-block { border-top: 1px solid var(--line-soft); padding-top: 12px; margin-top: 14px; }
+#import-block > * + * { margin-top: 8px; }
+#import-url {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 13.5px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px;
+}
+#import-url:focus { outline: none; border-color: var(--accent); }
+#import-block .import-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; }
+#import-block .import-options select { width: 100%; margin-top: 4px; }
