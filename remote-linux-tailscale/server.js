@@ -29,6 +29,7 @@
 //   GET  /health                                              -> { ok: true }
 //   GET  /config                                              -> { signIn, ipRotation }
 //   POST /signin/open                                         -> opens ChatGPT/Gemini/Claude tabs
+//   GET  /signin/status                                       -> { status: { ChatGPT: 'signed-in'|... } }
 //   GET  /vnc/...                                             -> noVNC view of the server's Chrome
 //   GET  /ip                                                  -> rotation state + public IP
 //   POST /ip/rotate                                           -> reconnect router for a new IP
@@ -227,12 +228,46 @@ async function openSignInTabs() {
   for (const name of config.rotationOrder) {
     const url = config.providers[name].url;
     const host = new URL(url).host;
-    if (!targets.some((t) => t.type === 'page' && t.url && t.url.includes(host))) {
+    if (!targets.some((t) => t.type === 'page' && cdp.hostOf(t.url) === host)) {
       await cdp.newTab(url);
       opened.push(name);
     }
   }
   return opened;
+}
+
+// Runs inside each provider page: 'signed-out' when it shows a login page or a
+// "Log in"/"Sign in" button (the same for ChatGPT, Gemini and Claude), else 'signed-in'.
+const SIGNED_IN_CHECK = `(() => {
+  if (document.readyState !== 'complete') return 'loading';
+  if (/^\\/(login|auth|signin)/i.test(location.pathname)) return 'signed-out';
+  const labels = [...document.querySelectorAll('a,button')]
+    .filter((el) => el.offsetParent !== null)
+    .map((el) => el.innerText.trim().toLowerCase());
+  return labels.some((t) => t === 'log in' || t === 'sign in' || t === 'sign up') ? 'signed-out' : 'signed-in';
+})()`;
+
+// Reports each provider's login state from its open tab in the server's Chrome.
+async function signInStatus() {
+  const cdp = require('./cdp');
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'providers.json'), 'utf8'));
+  const targets = await cdp.listTargets();
+  const status = {};
+  for (const name of config.rotationOrder) {
+    const host = new URL(config.providers[name].url).host;
+    const target = targets.find((t) => t.type === 'page' && cdp.hostOf(t.url) === host);
+    if (!target) { status[name] = 'no-tab'; continue; }
+    let ws;
+    try {
+      ws = await cdp.connect(target.webSocketDebuggerUrl);
+      status[name] = await cdp.evaluate(ws, SIGNED_IN_CHECK);
+    } catch {
+      status[name] = 'unknown';
+    } finally {
+      if (ws) ws.close();
+    }
+  }
+  return status;
 }
 
 function sendJson(res, status, body, extraHeaders = {}) {
@@ -367,7 +402,7 @@ function proxyVncUpgrade(req, socket, head, url, vncPort) {
   socket.on('error', close);
 }
 
-function createServer({ token, runner, vncPort = null, rotatorRunner = null, openTabs = openSignInTabs, publicIp = fetchPublicIp } = {}) {
+function createServer({ token, runner, vncPort = null, rotatorRunner = null, openTabs = openSignInTabs, publicIp = fetchPublicIp, loginStatus = signInStatus } = {}) {
   const queue = new JobQueue(runner);
   const rotation = new IpRotation({ runner: rotatorRunner, queue });
 
@@ -445,6 +480,11 @@ function createServer({ token, runner, vncPort = null, rotatorRunner = null, ope
       if (url.pathname === '/signin/open' && req.method === 'POST') {
         const opened = await openTabs();
         sendJson(res, 200, { opened });
+        return;
+      }
+
+      if (url.pathname === '/signin/status' && req.method === 'GET') {
+        sendJson(res, 200, { status: await loginStatus() });
         return;
       }
 

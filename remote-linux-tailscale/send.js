@@ -41,7 +41,7 @@ function trySelectors(selectors, action) {
 async function findOrOpenTab(cfg) {
   const targets = await cdp.listTargets();
   const host = new URL(cfg.url).host;
-  let target = targets.find((t) => t.type === 'page' && t.url && t.url.includes(host));
+  let target = targets.find((t) => t.type === 'page' && cdp.hostOf(t.url) === host);
   if (!target) target = await cdp.newTab(cfg.url);
   return target;
 }
@@ -109,7 +109,7 @@ async function sendToProvider(providerName, prompt, options = {}) {
   const ws = await cdp.connect(target.webSocketDebuggerUrl);
   try {
     await cdp.sendCommand(ws, 'Page.enable');
-    if (!target.url || !target.url.includes(new URL(cfg.url).host)) {
+    if (cdp.hostOf(target.url) !== new URL(cfg.url).host) {
       await cdp.sendCommand(ws, 'Page.navigate', { url: cfg.url });
       await new Promise((r) => setTimeout(r, 3000));
     }

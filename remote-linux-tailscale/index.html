@@ -44,6 +44,7 @@
   <section id="signinBox" class="hidden">
     <h2>Sign in to AI sites</h2>
     <p class="muted">Opens the server's own browser in a new tab. Sign in to ChatGPT, Gemini and Claude there once; the logins are remembered.</p>
+    <div id="loginStatus" class="muted">Checking…</div>
     <a id="signin" class="button" target="_blank" rel="noopener" href="/vnc/vnc.html?path=vnc/websockify&amp;autoconnect=1&amp;resize=scale&amp;reconnect=1">Open sign-in screen</a>
   </section>
   <section id="ipBox" class="hidden">
@@ -140,6 +141,23 @@
       api('/signin/open', {method:'POST'}).catch(() => {});
     });
 
+    const LOGIN_TEXT = {'signed-in':'✅ logged in','signed-out':'❌ not logged in','no-tab':'– not opened yet','loading':'… loading','unknown':'? unknown'};
+    async function refreshLogin() {
+      try {
+        const {status} = await api('/signin/status');
+        const names = Object.keys(status);
+        const ready = names.filter(n => status[n] === 'signed-in').length;
+        el('loginStatus').replaceChildren(...names.map(n => {
+          const row = document.createElement('div');
+          row.textContent = `${n}: ${LOGIN_TEXT[status[n]] || status[n]}`;
+          return row;
+        }), Object.assign(document.createElement('strong'), {
+          textContent: ready === 0 ? 'Summaries will fail until you log in to at least one site.' : `Ready: ${ready} of ${names.length} sites logged in.`,
+          className: ready === 0 ? 'error' : 'ok',
+        }));
+      } catch {}
+    }
+
     let ipTimer = null;
     async function refreshIp() {
       clearTimeout(ipTimer);
@@ -181,6 +199,7 @@
 
     api('/config').then(config => {
       el('signinBox').classList.toggle('hidden', !config.signIn);
+      if (config.signIn) { refreshLogin(); setInterval(refreshLogin, 15000); }
       el('ipBox').classList.toggle('hidden', !config.ipRotation);
       if (config.ipRotation) refreshIp();
     }).catch(() => {});

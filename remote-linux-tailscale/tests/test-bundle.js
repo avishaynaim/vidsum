@@ -51,6 +51,11 @@ assert.strictEqual(chooseYtDlpTrack({ subtitles: {}, automatic_captions: {} }), 
 assert.deepStrictEqual(chooseYtDlpTrack({ language: 'en', subtitles: { en: [], iw: [] }, automatic_captions: {} }), { lang: 'iw', auto: false });
 assert.deepStrictEqual(chooseYtDlpTrack({ language: 'en', subtitles: {}, automatic_captions: { 'en-orig': [], iw: [] } }), { lang: 'en-orig', auto: true }, 'machine-translated Hebrew is not preferred over the real original');
 
+const cdpMod = require('../cdp');
+assert.strictEqual(cdpMod.hostOf('https://accounts.google.com/signin?origin=https%3A%2F%2Fclaude.ai'), 'accounts.google.com');
+assert.strictEqual(cdpMod.hostOf('https://claude.ai/new'), 'claude.ai');
+assert.strictEqual(cdpMod.hostOf('not a url'), '');
+
 const display = require('../display');
 assert.strictEqual(display.findFreeDisplay(90, (p) => p.includes('X90')), 91);
 const env = display.displayEnv(':91', { WAYLAND_DISPLAY: 'wayland-0', XDG_SESSION_TYPE: 'wayland', HOME: '/h' });
@@ -64,6 +69,7 @@ async function testDashboard() {
   const { server } = createServer({
     token: 'bundle-test-token',
     runner: async () => ({ text: 'unused', provider: 'ChatGPT' }),
+    loginStatus: async () => ({ ChatGPT: 'signed-out' }),
   });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -102,6 +108,9 @@ async function testDashboard() {
     assert.deepStrictEqual(await viaCookie.json(), { signIn: false, ipRotation: false });
     const badCookie = await fetch(`http://127.0.0.1:${port}/config`, { headers: { Cookie: 'ytsum_token=wrong-token-value' } });
     assert.strictEqual(badCookie.status, 401);
+
+    const loginState = await fetch(`http://127.0.0.1:${port}/signin/status`, { headers: { Authorization: 'Bearer bundle-test-token' } });
+    assert.deepStrictEqual(await loginState.json(), { status: { ChatGPT: 'signed-out' } });
 
     const noVnc = await fetch(`http://127.0.0.1:${port}/vnc/vnc.html`, { headers: { Authorization: 'Bearer bundle-test-token' } });
     assert.strictEqual(noVnc.status, 404);
@@ -167,7 +176,7 @@ async function testIpRotation() {
 testDashboard()
   .then(testVncProxy)
   .then(testIpRotation)
-  .then(() => console.log(`${required.length + 50} bundle checks passed`))
+  .then(() => console.log(`${required.length + 54} bundle checks passed`))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exit(1);

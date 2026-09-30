@@ -89,6 +89,12 @@ function isTransientInfrastructureError(err) {
   return /Target\.createTarget failed|failed to open new tab|Session with given id not found|internal WebSocket error/i.test(message);
 }
 
+// Exact host of a tab URL. Tabs must be matched on this, not on url.includes(host): a Google
+// sign-in page's URL contains "claude.ai" in its query string.
+function hostOf(url) {
+  try { return new URL(url).host; } catch { return ''; }
+}
+
 module.exports = {
-  listTargets, newTab, closeTab, connect, sendCommand, evaluate, isTransientInfrastructureError,
+  hostOf, listTargets, newTab, closeTab, connect, sendCommand, evaluate, isTransientInfrastructureError,
 };
