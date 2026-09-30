@@ -79,7 +79,7 @@ function findFreePort() {
 // engine's Start-YtBrowser, which needs that for Windows CreateProcess re-parsing): on Linux,
 // child_process.spawn passes argv entries directly with no shell re-parsing, so embedding
 // quote characters would corrupt the path by making them part of the literal value.
-function buildArgs({ port, profileDir, headless, url }) {
+function buildArgs({ port, profileDir, headless, url, windowSize }) {
   const args = [
     `--remote-debugging-port=${port}`,
     `--remote-debugging-address=127.0.0.1`, // stays loopback-only; server.js is the network boundary
@@ -87,8 +87,12 @@ function buildArgs({ port, profileDir, headless, url }) {
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-fre',
+    // Without this Chrome waits on the desktop keyring before any network request; on a
+    // server/virtual screen nothing ever answers, so every page hangs on "Loading...".
+    '--password-store=basic',
   ];
   if (headless) args.push('--headless=new');
+  else if (windowSize) args.push(`--window-size=${windowSize.width},${windowSize.height}`, '--window-position=0,0');
   if (url) args.push(url);
   return args;
 }
@@ -126,8 +130,10 @@ async function launchChrome(options = {}) {
   }
 
   const port = options.port || await findFreePort();
-  const args = buildArgs({ port, profileDir, headless, url: options.url });
-  const proc = (options.spawnImpl || spawn)(binary, args, { stdio: 'ignore', detached: false });
+  const args = buildArgs({ port, profileDir, headless, url: options.url, windowSize: options.windowSize });
+  // options.display points headed Chrome at a specific X screen (display.js's virtual one).
+  const env = options.display ? require('./display').displayEnv(options.display) : process.env;
+  const proc = (options.spawnImpl || spawn)(binary, args, { stdio: 'ignore', detached: false, env });
 
   proc.once('error', () => { /* surfaced via waitForCdpReady's timeout/failure instead */ });
 

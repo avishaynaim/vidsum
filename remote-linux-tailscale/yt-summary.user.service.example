@@ -1,0 +1,22 @@
+# systemd --user unit: runs the server as your own user, no sudo needed.
+# Install: copy to ~/.config/systemd/user/yt-summary.service, put
+#   YT_SUMMARY_TOKEN=<openssl rand -hex 32>
+# in ~/.config/yt-summary/env (chmod 600), then:
+#   systemctl --user daemon-reload && systemctl --user enable --now yt-summary
+#   loginctl enable-linger $USER   # keep it running while logged out
+[Unit]
+Description=YT Summary remote Linux service (virtual display + sign-in screen)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/vidsum/remote-linux-tailscale
+EnvironmentFile=%h/.config/yt-summary/env
+# Where finished <videoId>.summary.txt files are written.
+Environment=YT_SUMMARY_OUT=%h/yt-summaries
+ExecStart=/usr/bin/node %h/apps/vidsum/remote-linux-tailscale/start.js --port 8787
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

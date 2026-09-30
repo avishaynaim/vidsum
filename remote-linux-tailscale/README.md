@@ -59,3 +59,31 @@ ChatGPT/Gemini/Claude page automation and a real Tailscale path must be
 tested on your Linux machine. Provider websites can change their DOM, so the
 deployment AI may need to inspect and update selectors after the first live
 run.
+
+## Running it on this box (optional second way — the Windows app is unchanged)
+
+Installed as a **user** service (no sudo), from `yt-summary.user.service.example`:
+
+```bash
+systemctl --user status yt-summary        # restart / stop / start the same way
+journalctl --user -u yt-summary -f        # logs
+cat ~/.config/yt-summary/env              # the access token (keep it private)
+```
+
+Open from any browser on a device that has the Tailscale app connected:
+`http://100.x.y.z:8787/?token=TOKEN`. After the first visit the token is
+remembered in a cookie, so later visits work without it.
+
+**Sign in to the AI sites (once):** dashboard → *Open sign-in screen*. This
+shows the server's own Chrome inside your browser tab (noVNC); log in to
+ChatGPT, Gemini and Claude there. Chrome runs headed on a private virtual
+screen (Xvfb), never on the real desktop, and the screen is only reachable
+through the token-checked `/vnc/` path. Needs `xvfb x11vnc websockify novnc`;
+without them the server falls back to headless Chrome and hides the button.
+
+**Change IP:** dashboard → *Change IP now* runs `~/apps/router-ip-rotator`
+(override with `ROUTER_ROTATOR_DIR`). The internet — and Tailscale — drops
+for about 1–2 minutes; the page reconnects by itself. It is refused while a
+summary is running, and queued jobs wait until the IP change finishes.
+
+Finished summaries are also written to `~/yt-summaries/<videoId>.summary.txt`.

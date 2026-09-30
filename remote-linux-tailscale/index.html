@@ -7,9 +7,14 @@
   <style>
     body{font:16px system-ui,sans-serif;max-width:720px;margin:auto;padding:24px;background:#111827;color:#f9fafb}
     form,section{background:#1f2937;border-radius:14px;padding:18px;margin:16px 0}
-    input,select,button{box-sizing:border-box;width:100%;padding:12px;margin:7px 0;border-radius:8px;border:1px solid #4b5563;font:inherit}
-    button{background:#2563eb;color:white;border:0;font-weight:700} button:disabled{opacity:.5}
-    pre{white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:#9ca3af}.ok{color:#6ee7b7}.error{color:#fca5a5}
+    h2{font-size:1.05rem;margin:0 0 8px}
+    input,select,button,.button{box-sizing:border-box;width:100%;padding:12px;margin:7px 0;border-radius:8px;border:1px solid #4b5563;font:inherit}
+    button,.button{background:#2563eb;color:white;border:0;font-weight:700;display:block;text-align:center;text-decoration:none;cursor:pointer} button:disabled{opacity:.5}
+    button.secondary{background:#374151}
+    pre{white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:#9ca3af}.ok{color:#6ee7b7}.error{color:#fca5a5}.warn{color:#fcd34d}
+    .job{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid #374151;cursor:pointer}
+    .job:first-child{border-top:0}.job span:last-child{white-space:nowrap}
+    .hidden{display:none}
   </style>
 </head>
 <body>
@@ -32,11 +37,28 @@
     <pre id="log" class="muted"></pre>
     <pre id="result"></pre>
   </section>
+  <section id="jobsBox" class="hidden">
+    <h2>Recent jobs</h2>
+    <div id="jobs"></div>
+  </section>
+  <section id="signinBox" class="hidden">
+    <h2>Sign in to AI sites</h2>
+    <p class="muted">Opens the server's own browser in a new tab. Sign in to ChatGPT, Gemini and Claude there once; the logins are remembered.</p>
+    <a id="signin" class="button" target="_blank" rel="noopener" href="/vnc/vnc.html?path=vnc/websockify&amp;autoconnect=1&amp;resize=scale&amp;reconnect=1">Open sign-in screen</a>
+  </section>
+  <section id="ipBox" class="hidden">
+    <h2>Change IP</h2>
+    <p class="muted">Reconnects the home router to get a new public IP. The server's internet (and this page) drops for about 1–2 minutes, then reconnects by itself.</p>
+    <div>Public IP: <strong id="ip">…</strong></div>
+    <div id="ipState" class="muted"></div>
+    <button id="rotate" class="secondary">Change IP now</button>
+  </section>
   <script>
     const token = new URLSearchParams(location.search).get('token') || localStorage.ytSummaryToken || '';
     if (token) localStorage.ytSummaryToken = token;
     const auth = {Authorization:`Bearer ${token}`};
     const el = id => document.getElementById(id);
+    let watchedJob = null;
     function videoId(value) {
       value = value.trim();
       const direct = /^[A-Za-z0-9_-]{11}$/.exec(value);
@@ -49,10 +71,15 @@
       } catch {}
       throw new Error('Enter a valid YouTube URL or 11-character video ID.');
     }
+    async function api(path, options = {}) {
+      const response = await fetch(path, {...options, headers:{...auth, ...(options.headers || {})}});
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      return body;
+    }
     async function poll(jobId) {
-      const response = await fetch(`/status?jobId=${encodeURIComponent(jobId)}`, {headers:auth});
-      const job = await response.json();
-      if (!response.ok) throw new Error(job.error || `HTTP ${response.status}`);
+      if (watchedJob !== jobId) return;
+      const job = await api(`/status?jobId=${encodeURIComponent(jobId)}`);
       el('state').textContent = `State: ${job.state}`;
       el('state').className = job.state === 'done' ? 'ok' : job.state === 'error' ? 'error' : '';
       el('log').textContent = job.log.join('\n');
@@ -62,7 +89,14 @@
       } else if (job.state === 'error') {
         el('result').textContent = job.error;
         el('submit').disabled = false;
-      } else setTimeout(() => poll(jobId).catch(showError), 1500);
+      } else setTimeout(() => poll(jobId).catch(retryPoll(jobId)), 1500);
+    }
+    // The server may be briefly unreachable (e.g. during an IP change); keep trying quietly.
+    const retryPoll = jobId => () => setTimeout(() => poll(jobId).catch(retryPoll(jobId)), 5000);
+    function watch(jobId) {
+      watchedJob = jobId;
+      el('result').textContent = '';
+      poll(jobId).catch(showError);
     }
     function showError(error) {
       el('state').textContent = 'Error';
@@ -73,15 +107,85 @@
     el('form').addEventListener('submit', async event => {
       event.preventDefault(); el('submit').disabled = true; el('result').textContent = '';
       try {
-        const response = await fetch('/run', {
-          method:'POST', headers:{...auth,'Content-Type':'application/json'},
+        const body = await api('/run', {
+          method:'POST', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({videoId:videoId(el('video').value),level:el('level').value})
         });
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-        poll(body.jobId).catch(showError);
+        watch(body.jobId);
+        refreshJobs();
       } catch (error) { showError(error); }
     });
+
+    async function refreshJobs() {
+      try {
+        const {jobs} = await api('/jobs');
+        el('jobsBox').classList.toggle('hidden', jobs.length === 0);
+        el('jobs').replaceChildren(...jobs.map(job => {
+          const row = document.createElement('div');
+          row.className = 'job';
+          const name = document.createElement('span');
+          name.textContent = `${job.videoId} · ${job.level || 'legacy'}`;
+          const state = document.createElement('span');
+          state.textContent = job.state;
+          state.className = job.state === 'done' ? 'ok' : job.state === 'error' ? 'error' : 'muted';
+          row.append(name, state);
+          row.addEventListener('click', () => watch(job.id));
+          return row;
+        }));
+      } catch {}
+    }
+
+    el('signin').addEventListener('click', () => {
+      // Opens the provider tabs in the server's browser; the link itself shows that browser.
+      api('/signin/open', {method:'POST'}).catch(() => {});
+    });
+
+    let ipTimer = null;
+    async function refreshIp() {
+      clearTimeout(ipTimer);
+      let next = 30000;
+      try {
+        const ip = await api('/ip');
+        el('ip').textContent = ip.publicIp || (ip.state === 'rotating' ? 'changing…' : 'unknown');
+        el('rotate').disabled = ip.state === 'rotating';
+        if (ip.state === 'rotating') {
+          el('ipState').textContent = `Changing IP (started ${new Date(ip.startedAt).toLocaleTimeString()})…`;
+          el('ipState').className = 'warn';
+          next = 3000;
+        } else if (ip.state === 'done' && ip.result) {
+          el('ipState').textContent = ip.result.changed
+            ? `Changed: ${ip.result.before} → ${ip.result.after}`
+            : `Router reconnected but the IP stayed ${ip.result.after}.`;
+          el('ipState').className = ip.result.changed ? 'ok' : 'warn';
+        } else if (ip.state === 'error') {
+          el('ipState').textContent = `IP change failed: ${ip.error}`;
+          el('ipState').className = 'error';
+        }
+      } catch {
+        el('ip').textContent = 'reconnecting…';
+        next = 5000;
+      }
+      ipTimer = setTimeout(refreshIp, next);
+    }
+    el('rotate').addEventListener('click', async () => {
+      if (!confirm('Change the public IP now? The server goes offline for about 1–2 minutes.')) return;
+      el('rotate').disabled = true;
+      try {
+        await api('/ip/rotate', {method:'POST'});
+      } catch (error) {
+        el('ipState').textContent = error.message;
+        el('ipState').className = 'error';
+      }
+      refreshIp();
+    });
+
+    api('/config').then(config => {
+      el('signinBox').classList.toggle('hidden', !config.signIn);
+      el('ipBox').classList.toggle('hidden', !config.ipRotation);
+      if (config.ipRotation) refreshIp();
+    }).catch(() => {});
+    refreshJobs();
+    setInterval(refreshJobs, 5000);
   </script>
 </body>
 </html>
