@@ -360,7 +360,7 @@ class Scheduler {
       throw new ApiError(err.status || 502, err.status ? err.message : `Could not read that link: ${err.message}`);
     }
     const result = { kind: listed.kind, title: listed.title, found: listed.videos.length, added: 0, alreadyDone: 0, alreadyListed: 0, notAdded: 0, error: '' };
-    const limit = listed.kind === 'channel' ? Math.min(Math.max(1, Math.floor(Number(body.limit)) || 1), 50) : null;
+    const limit = listed.kind === 'channel' ? Math.max(1, Math.floor(Number(body.limit)) || 1) : null;
     for (const video of listed.videos) {
       const existing = this.store.jobs.find((j) => j.VideoId === video.videoId && j.SummaryLevel === level);
       if (existing) {
@@ -424,7 +424,7 @@ class Scheduler {
     if (!source) throw new ApiError(409, 'That saved channel or playlist no longer exists.');
     if (body.limit !== undefined) {
       const limit = Number(body.limit);
-      if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new ApiError(400, 'Latest videos must be a whole number from 1 to 50.');
+      if (!Number.isInteger(limit) || limit < 1) throw new ApiError(400, 'Latest videos must be a whole number, 1 or more.');
       if (source.kind === 'channel') source.limit = limit;
     }
     if (body.summaryLevel !== undefined) {

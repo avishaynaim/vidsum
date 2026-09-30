@@ -282,7 +282,7 @@ async function testImportList() {
   await listVideos('https://www.youtube.com/@x', { limit: 7.8 }, { runYtDlp: fakeYtDlp });
   assert.strictEqual(lastArgs[lastArgs.indexOf('--playlist-end') + 1], '27', 'a typed number is used as a whole number (7 + 20 spare)');
   await listVideos('https://www.youtube.com/@x', { limit: 999 }, { runYtDlp: fakeYtDlp });
-  assert.strictEqual(lastArgs[lastArgs.indexOf('--playlist-end') + 1], '70', 'channels are capped at 50 (+20 spare)');
+  assert.strictEqual(lastArgs[lastArgs.indexOf('--playlist-end') + 1], '1019', 'no upper limit for channels (999 + 20 spare)');
   await listVideos('https://www.youtube.com/playlist?list=PLa', { limit: 1 }, { runYtDlp: fakeYtDlp });
   assert.strictEqual(lastArgs[lastArgs.indexOf('--playlist-end') + 1], '200', 'a playlist takes all its videos (up to 200)');
 
@@ -332,7 +332,9 @@ async function testImportList() {
 
   const updated = await handleApi(scheduler, 'POST', '/api/sources/update', { id: sources[0].id, limit: 20, summaryLevel: 'min' });
   assert.deepStrictEqual({ limit: updated.limit, level: updated.summaryLevel }, { limit: 20, level: 'min' });
-  await assert.rejects(handleApi(scheduler, 'POST', '/api/sources/update', { id: sources[0].id, limit: 51 }), (e) => e.status === 400);
+  assert.strictEqual((await handleApi(scheduler, 'POST', '/api/sources/update', { id: sources[0].id, limit: 120 })).limit, 120, 'more than 50 is allowed');
+  await handleApi(scheduler, 'POST', '/api/sources/update', { id: sources[0].id, limit: 20 });
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/sources/update', { id: sources[0].id, limit: 0 }), (e) => e.status === 400);
   const all = await handleApi(scheduler, 'POST', '/api/sources/run-all', {});
   assert.strictEqual(all.results[0].added, 3, 'check all uses the saved (now Min) level');
 

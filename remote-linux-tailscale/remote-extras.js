@@ -181,9 +181,9 @@
     id: 'import-url', type: 'url', inputMode: 'url', autocomplete: 'off', spellcheck: false,
     placeholder: 'https://www.youtube.com/playlist?list=…  or  https://www.youtube.com/@channel',
   });
-  // Type any number from 1 to 50, or pick a preset from the list.
+  // Type any number (1 or more), or pick a preset from the list.
   const importLimit = el('input', {
-    id: 'import-limit', type: 'number', min: 1, max: 50, step: 1, value: '1', inputMode: 'numeric',
+    id: 'import-limit', type: 'number', min: 1, step: 1, value: '1', inputMode: 'numeric',
   });
   importLimit.setAttribute('list', 'import-limit-presets');
   const importPresets = el('datalist', { id: 'import-limit-presets' },
@@ -197,7 +197,7 @@
     el('label', { className: 'field', htmlFor: 'import-url' }, 'Playlist link (all its videos) or channel link (its latest videos)'),
     importUrl,
     el('div', { className: 'import-options' },
-      el('label', { className: 'field' }, 'Latest videos from a channel (1–50)', importLimit, importPresets),
+      el('label', { className: 'field' }, 'Latest videos from a channel', importLimit, importPresets),
       el('label', { className: 'field' }, 'Summary level', importLevel)),
     el('div', { className: 'row' }, importButton),
     importResult,
@@ -290,8 +290,8 @@
     const url = importUrl.value.trim();
     if (!url) { importResult.textContent = 'Paste a playlist or channel link first.'; return; }
     const limit = Number(importLimit.value);
-    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
-      importResult.textContent = 'Latest videos must be a whole number from 1 to 50.';
+    if (!Number.isInteger(limit) || limit < 1) {
+      importResult.textContent = 'Latest videos must be a whole number, 1 or more.';
       importLimit.focus();
       return;
     }

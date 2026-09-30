@@ -7,7 +7,6 @@
 // per-video lookups), the same tool transcript.js already relies on.
 
 const MAX_PLAYLIST = 200;
-const MAX_CHANNEL = 50;
 const YOUTUBE_HOSTS = ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com'];
 const CHANNEL_PATH = /^\/(@[^/]+|channel\/[^/]+|c\/[^/]+|user\/[^/]+)(\/[^/]*)?\/?$/;
 const CHANNEL_TABS = ['videos', 'streams', 'shorts'];
@@ -35,7 +34,8 @@ function normalizeListUrl(input) {
 // deps.runYtDlp(args) -> stdout (injectable for tests).
 async function listVideos(input, { limit = 1 } = {}, deps = {}) {
   const target = normalizeListUrl(input);
-  const max = target.kind === 'channel' ? Math.min(Math.max(1, Math.floor(Number(limit)) || 1), MAX_CHANNEL) : MAX_PLAYLIST;
+  // A channel takes any number of latest videos (the queue's own 200-unfinished cap still applies).
+  const max = target.kind === 'channel' ? Math.max(1, Math.floor(Number(limit)) || 1) : MAX_PLAYLIST;
   let runYtDlp = deps.runYtDlp;
   if (!runYtDlp) {
     const transcript = require('./transcript');
@@ -65,4 +65,4 @@ async function listVideos(input, { limit = 1 } = {}, deps = {}) {
   return { kind: target.kind, url: target.url, title: String(info.title || '').trim(), videos };
 }
 
-module.exports = { normalizeListUrl, listVideos, MAX_PLAYLIST, MAX_CHANNEL };
+module.exports = { normalizeListUrl, listVideos, MAX_PLAYLIST };
