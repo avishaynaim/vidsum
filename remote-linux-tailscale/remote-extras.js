@@ -275,6 +275,7 @@
   };
 
   const searchDialog = el('dialog', { id: 'search-dialog' });
+  const savedSlot = el('div', {}); // the saved-searches list is created further down and placed here
   const searchQuery = el('input', { type: 'search', dir: 'auto', placeholder: 'Word or phrase, Hebrew or English', enterKeyHint: 'search', autocomplete: 'off' });
   const contextSelect = el('select', { title: 'Words shown before and after each match' },
     ...[10, 20, 30, 50, 100].map((n) => el('option', { value: String(n), selected: n === 30 }, `${n} words around`)));
@@ -329,7 +330,7 @@
     el('div', { className: 'viewer-head' }, el('div', {}, el('h2', {}, 'Search in summaries'),
       el('p', { className: 'muted' }, 'Finds the words in every summary and part, ignoring Hebrew vowel marks.')), closeSearch),
     el('div', { className: 'search-body' },
-      savedBlock,
+      savedSlot,
       el('div', { className: 'row search-form' }, searchQuery, contextSelect, searchGo),
       el('div', { className: 'row search-not' }, notInput, notAdd, notChips),
       el('div', { className: 'row search-scope' }, scopeSummary, scopeToggle),
@@ -410,6 +411,7 @@
   const savedCount = el('span', { className: 'muted' });
   const savedBlock = el('details', { className: 'saved-searches', hidden: true },
     el('summary', {}, el('b', {}, 'Saved searches '), savedCount), savedList);
+  savedSlot.append(savedBlock);
 
   const filterText = (entry) => [`"${entry.query}"`, ...(entry.exclude || []).map((x) => `not "${x}"`)].join(', ') +
     (entry.jobIds ? ` · in ${plural(entry.jobIds.length, 'chosen video')}` : ' · all videos');

@@ -185,6 +185,7 @@ testDashboard()
   .then(testVncProxy)
   .then(testIpRotation)
   .then(require('./test-dashboard-api'))
+  .then(require('./test-page-script'))
   .then(() => console.log(`${required.length + 54} bundle checks passed`))
   .catch((error) => {
     console.error(error.stack || error.message);
