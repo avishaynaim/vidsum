@@ -62,7 +62,7 @@ async function listVideos(input, { limit = 1 } = {}, deps = {}) {
     });
     if (videos.length >= max) break;
   }
-  return { kind: target.kind, title: String(info.title || '').trim(), videos };
+  return { kind: target.kind, url: target.url, title: String(info.title || '').trim(), videos };
 }
 
 module.exports = { normalizeListUrl, listVideos, MAX_PLAYLIST, MAX_CHANNEL };

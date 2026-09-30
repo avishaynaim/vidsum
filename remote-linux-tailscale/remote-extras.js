@@ -203,7 +203,89 @@
     importResult,
     el('p', { className: 'muted' }, 'Each video gets its own summary. Videos already summarized at the same level are skipped.'));
 
+  // Saved channels & playlists: every import is remembered so it can be checked again.
+  const sourcesList = el('div', { className: 'sources-list' });
+  const checkAll = el('button', { type: 'button', hidden: true }, 'Check all for new videos');
+  const sourcesBlock = el('div', { id: 'sources-block', hidden: true },
+    el('div', { className: 'sources-head' }, el('div', { className: 'panel-title' }, 'Saved channels & playlists'), checkAll),
+    sourcesList);
+  importBlock.append(sourcesBlock);
+
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  function describeResult(r, level) {
+    const what = r.kind === 'channel' ? 'channel' : 'playlist';
+    const parts = [`Found ${plural(r.found, 'video')} in the ${what}${r.title ? ` "${r.title}"` : ''}: ${r.added} added`];
+    if (r.alreadyDone) parts.push(`${r.alreadyDone} already summarized at ${LEVEL_NAMES[level] || level} (skipped)`);
+    if (r.alreadyListed) parts.push(`${r.alreadyListed} already in the list`);
+    if (r.notAdded) parts.push(`${r.notAdded} not added: ${r.error}`);
+    return parts.join(', ') + '.';
+  }
+
+  function sourceRow(source) {
+    const status = el('p', { className: 'muted' });
+    const last = source.lastResult || {};
+    const when = source.lastRunAt ? new Date(source.lastRunAt).toLocaleString() : 'never';
+    status.textContent = `Last checked ${when}: ${last.added || 0} new` +
+      (last.alreadyDone ? `, ${last.alreadyDone} already summarized` : '') + (last.error ? ` (${last.error})` : '');
+    const run = el('button', { type: 'button', className: 'primary' }, 'Check for new videos');
+    run.addEventListener('click', async () => {
+      run.disabled = true;
+      status.textContent = 'Checking YouTube for new videos…';
+      try {
+        const r = await post('/api/sources/run', { id: source.id });
+        status.textContent = describeResult(r, source.summaryLevel);
+        setTimeout(loadSources, 4000);
+      } catch (error) {
+        status.textContent = `Could not check: ${error.message}`;
+      } finally { run.disabled = false; }
+    });
+    const edit = el('button', { type: 'button' }, 'Edit');
+    edit.addEventListener('click', () => {
+      importUrl.value = source.url;
+      importLimit.value = String(source.limit || 1);
+      if (LEVEL_NAMES[source.summaryLevel]) importLevel.value = source.summaryLevel;
+      importResult.textContent = 'Change the count or level, then press Add all videos to save and check it.';
+      importUrl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    const remove = el('button', { type: 'button' }, 'Remove');
+    remove.addEventListener('click', async () => {
+      if (!confirm(`Stop remembering "${source.title}"? Its videos and summaries stay.`)) return;
+      try { await post('/api/sources/delete', { id: source.id }); loadSources(); }
+      catch (error) { status.textContent = error.message; }
+    });
+    const settings = source.kind === 'channel' ? `Channel · latest ${source.limit || 1}` : 'Playlist · all videos';
+    return el('div', { className: 'source-row' },
+      el('a', { className: 'source-title', href: source.url, target: '_blank', rel: 'noopener noreferrer', dir: 'auto' }, source.title || source.url),
+      el('p', { className: 'muted' }, `${settings} · ${LEVEL_NAMES[source.summaryLevel] || source.summaryLevel}`),
+      status,
+      el('div', { className: 'row source-actions' }, run, edit, remove));
+  }
+
+  async function loadSources() {
+    try {
+      const { sources } = await api('/api/sources');
+      sourcesBlock.hidden = sources.length === 0;
+      checkAll.hidden = sources.length < 2;
+      sourcesList.replaceChildren(...[...sources].reverse().map(sourceRow));
+    } catch { /* offline */ }
+  }
+
+  checkAll.addEventListener('click', async () => {
+    checkAll.disabled = true;
+    const label = checkAll.textContent;
+    checkAll.textContent = 'Checking all…';
+    try {
+      const { results } = await post('/api/sources/run-all', {});
+      const added = results.reduce((sum, r) => sum + (r.added || 0), 0);
+      importResult.textContent = `Checked ${plural(results.length, 'saved list')}: ${plural(added, 'new video')} added.`;
+      loadSources();
+    } catch (error) {
+      importResult.textContent = `Could not check all: ${error.message}`;
+    } finally {
+      checkAll.disabled = false;
+      checkAll.textContent = label;
+    }
+  });
   importButton.addEventListener('click', async () => {
     const url = importUrl.value.trim();
     if (!url) { importResult.textContent = 'Paste a playlist or channel link first.'; return; }
@@ -223,13 +305,9 @@
       });
       const r = await response.json();
       if (!response.ok) throw new Error(r.error || `Request failed (${response.status}).`);
-      const what = r.kind === 'channel' ? 'channel' : 'playlist';
-      const parts = [`Found ${plural(r.found, 'video')} in the ${what}${r.title ? ` "${r.title}"` : ''}: ${r.added} added`];
-      if (r.alreadyDone) parts.push(`${r.alreadyDone} already summarized at ${LEVEL_NAMES[importLevel.value]} (skipped)`);
-      if (r.alreadyListed) parts.push(`${r.alreadyListed} already in the list`);
-      if (r.notAdded) parts.push(`${r.notAdded} not added: ${r.error}`);
-      importResult.textContent = parts.join(', ') + '.';
-      if (r.added) importUrl.value = '';
+      importResult.textContent = describeResult(r, importLevel.value) + ' Saved under "Saved channels & playlists".';
+      importUrl.value = '';
+      loadSources();
     } catch (error) {
       importResult.textContent = `Could not add: ${error.message}`;
     } finally {
@@ -242,6 +320,7 @@
   document.body.append(viewer);
   const addPanel = document.querySelector('section.panel:has(#batch)');
   if (addPanel) addPanel.append(importBlock);
+  loadSources();
   api('/api/status').then((status) => { if (LEVEL_NAMES[status.summaryLevel]) importLevel.value = status.summaryLevel; }).catch(() => {});
   api('/config').then((config) => {
     signInBlock.hidden = !config.signIn;

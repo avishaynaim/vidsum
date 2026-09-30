@@ -125,6 +125,16 @@ class JobStore {
     job.TranscriptSaved = false;
   }
 
+  // Playlists/channels imported before, so they can be checked again: [{ id, url, kind, title,
+  // limit, summaryLevel, createdAt, lastRunAt, lastResult }].
+  loadSources() {
+    try { return JSON.parse(fs.readFileSync(path.join(this.dir, 'sources.json'), 'utf8')); } catch { return []; }
+  }
+
+  saveSources(sources) {
+    atomicWrite(path.join(this.dir, 'sources.json'), JSON.stringify(sources));
+  }
+
   loadSettings() {
     const defaults = { summaryLevel: 'ultra', enabledProviders: [...PROVIDERS], keepIntermediateTabs: false };
     try {
@@ -350,6 +360,7 @@ class Scheduler {
       throw new ApiError(err.status || 502, err.status ? err.message : `Could not read that link: ${err.message}`);
     }
     const result = { kind: listed.kind, title: listed.title, found: listed.videos.length, added: 0, alreadyDone: 0, alreadyListed: 0, notAdded: 0, error: '' };
+    const limit = listed.kind === 'channel' ? Math.min(Math.max(1, Math.floor(Number(body.limit)) || 1), 50) : null;
     for (const video of listed.videos) {
       const existing = this.store.jobs.find((j) => j.VideoId === video.videoId && j.SummaryLevel === level);
       if (existing) {
@@ -366,7 +377,67 @@ class Scheduler {
         break;
       }
     }
+    result.source = this.rememberSource({ url: listed.url || body.url, kind: listed.kind, title: listed.title, limit, summaryLevel: level, result });
     return result;
+  }
+
+  // Every successful import is remembered (one entry per link; importing it again updates it).
+  rememberSource({ url, kind, title, limit, summaryLevel, result }) {
+    const sources = this.store.loadSources();
+    let source = sources.find((s) => s.url === url);
+    if (!source) {
+      source = { id: crypto.randomUUID(), url, kind, createdAt: now() };
+      sources.push(source);
+    }
+    Object.assign(source, {
+      title: title || source.title || url, limit, summaryLevel, lastRunAt: now(),
+      lastResult: { found: result.found, added: result.added, alreadyDone: result.alreadyDone, alreadyListed: result.alreadyListed, error: result.error },
+    });
+    this.store.saveSources(sources);
+    return source;
+  }
+
+  findSource(id) {
+    const source = this.store.loadSources().find((s) => s.id === id);
+    if (!source) throw new ApiError(409, 'That saved channel or playlist no longer exists.');
+    return source;
+  }
+
+  // Checks a saved channel/playlist again with its saved count and level.
+  runSource(id) {
+    const source = this.findSource(id);
+    return this.importList({ url: source.url, limit: source.limit || 1, summaryLevel: source.summaryLevel });
+  }
+
+  async runAllSources() {
+    const results = [];
+    for (const source of this.store.loadSources()) {
+      try { results.push({ id: source.id, ...(await this.runSource(source.id)) }); }
+      catch (err) { results.push({ id: source.id, title: source.title, error: err.message }); }
+    }
+    return { results };
+  }
+
+  updateSource(body) {
+    const sources = this.store.loadSources();
+    const source = sources.find((s) => s.id === body.id);
+    if (!source) throw new ApiError(409, 'That saved channel or playlist no longer exists.');
+    if (body.limit !== undefined) {
+      const limit = Number(body.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new ApiError(400, 'Latest videos must be a whole number from 1 to 50.');
+      if (source.kind === 'channel') source.limit = limit;
+    }
+    if (body.summaryLevel !== undefined) {
+      if (!LEVELS.includes(body.summaryLevel)) throw new ApiError(400, 'Unknown summary level.');
+      source.summaryLevel = body.summaryLevel;
+    }
+    this.store.saveSources(sources);
+    return source;
+  }
+
+  deleteSource(id) {
+    this.findSource(id);
+    this.store.saveSources(this.store.loadSources().filter((s) => s.id !== id));
   }
 
   pump() {
@@ -681,6 +752,7 @@ class Scheduler {
 // Routes one /api/* request. `body` is the parsed JSON object (POST) or null (GET).
 async function handleApi(scheduler, method, pathname, body) {
   if (method === 'GET' && pathname === '/api/status') return scheduler.status();
+  if (method === 'GET' && pathname === '/api/sources') return { sources: scheduler.store.loadSources() };
   if (method !== 'POST') throw new ApiError(404, 'Unknown endpoint.');
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ApiError(400, 'A JSON object is required.');
   switch (pathname) {
@@ -699,6 +771,10 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
     case '/api/details': return scheduler.details(body.jobId);
     case '/api/import': return scheduler.importList(body);
+    case '/api/sources/run': return scheduler.runSource(body.id);
+    case '/api/sources/run-all': return scheduler.runAllSources();
+    case '/api/sources/update': return scheduler.updateSource(body);
+    case '/api/sources/delete': scheduler.deleteSource(body.id); return { deleted: true };
     case '/api/result': return { finalResult: scheduler.store.getResult(scheduler.find(body.jobId)) };
     case '/api/clear-errors': return { cleared: scheduler.clearWhere((j) => j.State === 'error') };
     case '/api/clear-cancelled': return { cleared: scheduler.clearWhere((j) => ['cancelled', 'reviewed'].includes(j.State)) };

@@ -318,6 +318,29 @@ async function testImportList() {
   const ultra = await handleApi(scheduler, 'POST', '/api/import', { url: 'https://www.youtube.com/@x', limit: 5, summaryLevel: 'ultra' });
   assert.strictEqual(ultra.added, 3);
   await assert.rejects(handleApi(scheduler, 'POST', '/api/import', { url: '' }), (e) => e.status === 400);
+
+  // Imported lists are remembered: one entry per link, updated by later imports.
+  let { sources } = await handleApi(scheduler, 'GET', '/api/sources', null);
+  assert.strictEqual(sources.length, 1, 'importing the same link twice keeps one saved entry');
+  assert.deepStrictEqual({ kind: sources[0].kind, title: sources[0].title, limit: sources[0].limit, level: sources[0].summaryLevel },
+    { kind: 'channel', title: 'My channel', limit: 5, level: 'ultra' });
+  assert.strictEqual(sources[0].lastResult.added, 3);
+
+  // Checking it again adds nothing new: every video already has a job at that level.
+  const again = await handleApi(scheduler, 'POST', '/api/sources/run', { id: sources[0].id });
+  assert.deepStrictEqual({ added: again.added, skipped: again.alreadyDone + again.alreadyListed }, { added: 0, skipped: 3 });
+
+  const updated = await handleApi(scheduler, 'POST', '/api/sources/update', { id: sources[0].id, limit: 20, summaryLevel: 'min' });
+  assert.deepStrictEqual({ limit: updated.limit, level: updated.summaryLevel }, { limit: 20, level: 'min' });
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/sources/update', { id: sources[0].id, limit: 51 }), (e) => e.status === 400);
+  const all = await handleApi(scheduler, 'POST', '/api/sources/run-all', {});
+  assert.strictEqual(all.results[0].added, 3, 'check all uses the saved (now Min) level');
+
+  await handleApi(scheduler, 'POST', '/api/sources/delete', { id: sources[0].id });
+  ({ sources } = await handleApi(scheduler, 'GET', '/api/sources', null));
+  assert.strictEqual(sources.length, 0);
+  assert.ok(store.jobs.length >= 7, 'removing a saved list keeps its videos and summaries');
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/sources/run', { id: 'gone' }), (e) => e.status === 409);
 }
 
 module.exports = async function run() {
