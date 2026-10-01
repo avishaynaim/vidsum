@@ -133,7 +133,15 @@ async function runVideo(args, onStatus) {
   let title = args.videoId;
   if (!transcriptText) {
     onStatus('Fetching transcript...');
-    const fetched = await transcriptMod.fetchTranscript(args.videoId);
+    let fetched;
+    try {
+      fetched = await transcriptMod.fetchTranscript(args.videoId);
+    } catch (err) {
+      // YouTube sometimes answers without captions or not at all (busy, rate limits, a busy
+      // host); it often works minutes later, so this stop is retryable like a provider one.
+      throw Object.assign(new Error(`Could not get the transcript from YouTube: ${err.message} Nothing was sent to a provider.`),
+        { retryable: true });
+    }
     transcriptText = fetched.text;
     title = fetched.title;
     if (args.onInfo) args.onInfo({ title: fetched.title, durationSeconds: fetched.durationSeconds || 0 });

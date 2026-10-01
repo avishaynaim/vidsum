@@ -134,7 +134,9 @@ function runYtDlp(bin, args) {
     execFile(bin, args, { maxBuffer: 64 * 1024 * 1024, timeout: 120000 }, (err, stdout, stderr) => {
       if (err) {
         const lastError = String(stderr).split('\n').filter((l) => l.startsWith('ERROR')).pop();
-        reject(new Error(`yt-dlp failed: ${lastError || err.message}`));
+        // Killed by our timeout (no ERROR line): say so instead of a bare "Command failed".
+        const reason = err.killed ? 'YouTube did not answer within 2 minutes' : (lastError || err.message);
+        reject(new Error(`yt-dlp failed: ${reason}`));
       } else resolve(stdout);
     });
   });
