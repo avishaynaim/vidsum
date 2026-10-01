@@ -214,3 +214,6 @@ mark.search-hit.current { background: #ff9f1c; outline: 2px solid #fff; }
 #search-dialog .saved-row > * + * { margin-top: 4px; }
 #search-dialog .saved-name { font-weight: 750; unicode-bidi: plaintext; overflow-wrap: anywhere; }
 #search-dialog .saved-banner { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 12px; color: var(--accent); font-weight: 650; unicode-bidi: plaintext; }
+
+/* Videos at the same time */
+#max-concurrent { width: 100%; margin-top: 4px; }

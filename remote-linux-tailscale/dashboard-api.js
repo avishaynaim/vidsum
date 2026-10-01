@@ -32,6 +32,18 @@ const SEEN_IDS_KEEP = 1000;
 // The server browser grows with every video and froze once after ~50; restart it this often
 // (and at once when it stops responding). Logins live in the profile and survive.
 const BROWSER_RECYCLE_EVERY = 10;
+// Videos processed at the same time (one AI step per provider at a time, see rotate.js's
+// ProviderPool, so more than 3 cannot help). Extra videos only start while the host has this
+// much memory available: running out of memory crashed the provider tabs once.
+const DEFAULT_CONCURRENT = 3;
+const MIN_FREE_MB_FOR_PARALLEL = 1500;
+
+function memAvailableMB() {
+  try {
+    const m = /MemAvailable:\s+(\d+) kB/.exec(fs.readFileSync('/proc/meminfo', 'utf8'));
+    return m ? Number(m[1]) / 1024 : Infinity;
+  } catch { return Infinity; }
+}
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
@@ -173,7 +185,7 @@ class JobStore {
   }
 
   loadSettings() {
-    const defaults = { summaryLevel: 'ultra', enabledProviders: [...PROVIDERS], keepIntermediateTabs: false };
+    const defaults = { summaryLevel: 'ultra', enabledProviders: [...PROVIDERS], keepIntermediateTabs: false, maxConcurrent: DEFAULT_CONCURRENT };
     try {
       return { ...defaults, ...JSON.parse(fs.readFileSync(path.join(this.dir, 'settings.json'), 'utf8')) };
     } catch {
@@ -244,11 +256,13 @@ async function fetchOEmbedTitle(videoId) {
 class Scheduler {
   constructor({ store, runner, fetchTitle = fetchOEmbedTitle, browserReady = async () => true, attachRunner = null, log = () => {},
     listVideos = (url, options) => require('./import-list').listVideos(url, options),
-    recycleBrowser = null,
+    recycleBrowser = null, memoryAvailable = memAvailableMB,
     loadCheckpoint = (videoId) => require('./checkpoint').loadCheckpoint(videoId) }) {
     this.loadCheckpoint = loadCheckpoint;
     this.listVideos = listVideos;
     this.recycleBrowser = recycleBrowser;
+    this.memoryAvailable = memoryAvailable;
+    this.recycleDue = null; // reason, once a restart is wanted; waits for running videos to finish
     this.videosSinceRecycle = 0;
     this.recycling = false;
     this.store = store;
@@ -258,7 +272,7 @@ class Scheduler {
     this.attachRunner = attachRunner;
     this.log = log;
     this.settings = store.loadSettings();
-    this.current = null; // { job, controller, mode: 'stop'|'pause'|'watch-later'|'helper' }
+    this.running = new Map(); // job id -> { job, controller, mode: 'stop'|'pause'|'watch-later'|'helper' }
     this.held = false;   // IP change in progress
     this.paused = false;
     this.pauseKind = '';
@@ -279,7 +293,11 @@ class Scheduler {
   }
 
   get busy() {
-    return !!this.current;
+    return this.running.size > 0;
+  }
+
+  get maxConcurrent() {
+    return Math.min(3, Math.max(1, Math.floor(Number(this.settings.maxConcurrent)) || DEFAULT_CONCURRENT));
   }
 
   hold(kind, reason) {
@@ -336,7 +354,7 @@ class Scheduler {
       enabledProviders: this.settings.enabledProviders, keepIntermediateTabs: this.settings.keepIntermediateTabs,
       paused: this.paused, pauseReason: this.pauseReason, pauseKind: this.pauseKind,
       autoRetryLimit: AUTO_RETRY_LIMIT, pausedWorkers: jobs.filter((j) => j.State === 'paused').length,
-      maxConcurrent: 1, startIntervalMilliseconds: 0, mobileOrigin: '',
+      maxConcurrent: this.maxConcurrent, startIntervalMilliseconds: 0, mobileOrigin: '',
       providerOrder: PROVIDERS,
       active: jobs.filter((j) => !isTerminal(j) && j.State !== 'queued').length,
       queued: jobs.filter((j) => j.State === 'queued').length,
@@ -553,14 +571,24 @@ class Scheduler {
   }
 
   pump() {
-    if (this.current || this.held || this.paused || !this.ready || this.recycling) return;
-    const job = this.store.jobs.find((j) => j.State === 'queued' && !j.WatchLater);
-    if (job) this.run(job);
+    if (this.held || this.paused || !this.ready || this.recycling || this.recycleDue) return;
+    while (this.running.size < this.maxConcurrent) {
+      if (this.running.size > 0 && this.memoryAvailable() < MIN_FREE_MB_FOR_PARALLEL) {
+        if (!this.memoryLimited) this.log(`Low memory: not starting more videos in parallel (${Math.round(this.memoryAvailable())} MB free).`);
+        this.memoryLimited = true;
+        return;
+      }
+      const job = this.store.jobs.find((j) => j.State === 'queued' && !j.WatchLater && !this.running.has(j.Id));
+      if (!job) return;
+      this.memoryLimited = false;
+      this.run(job); // registers itself in this.running before its first await
+    }
   }
 
   async run(job, { force = false } = {}) {
     const controller = new AbortController();
-    this.current = { job, controller, mode: null };
+    const entry = { job, controller, mode: null };
+    this.running.set(job.Id, entry);
     job.State = 'starting';
     job.Message = 'Starting in the server browser.';
     job.PausedByUser = false;
@@ -600,7 +628,7 @@ class Scheduler {
       job.AutoRetryAttempts = 0;
       job.AutoRetryAfterUtc = null;
     } catch (err) {
-      const mode = this.current.mode;
+      const mode = entry.mode;
       if (mode === 'pause') {
         job.State = 'cancelled';
         job.PausedByUser = true;
@@ -629,14 +657,16 @@ class Scheduler {
       }
     } finally {
       this.store.save(job);
-      this.current = null;
+      this.running.delete(job.Id);
       this.videosSinceRecycle++;
       const frozen = job.State === 'error' && frozenProviders >= 2;
-      if (this.recycleBrowser && (frozen || this.videosSinceRecycle >= BROWSER_RECYCLE_EVERY)) {
-        this.restartBrowser(frozen ? 'it stopped responding' : `routine refresh after ${this.videosSinceRecycle} videos`);
-      } else {
-        setImmediate(() => this.pump());
+      if (this.recycleBrowser && !this.recycleDue && (frozen || this.videosSinceRecycle >= BROWSER_RECYCLE_EVERY)) {
+        this.recycleDue = frozen ? 'it stopped responding' : `routine refresh after ${this.videosSinceRecycle} videos`;
+        if (this.running.size) this.log(`Browser restart due (${this.recycleDue}); waiting for ${this.running.size} running video(s) to finish.`);
       }
+      // A due restart happens once no video is using the browser; new videos wait for it.
+      if (this.recycleDue && this.running.size === 0) this.restartBrowser(this.recycleDue);
+      else setImmediate(() => this.pump());
     }
   }
 
@@ -653,15 +683,17 @@ class Scheduler {
       this.log(`Server browser restart failed: ${err.message}`);
     } finally {
       this.recycling = false;
+      this.recycleDue = null;
       this.browserMessage = '';
       setImmediate(() => this.pump());
     }
   }
 
   cancelCurrent(job, mode) {
-    if (!this.current || this.current.job !== job) return false;
-    this.current.mode = mode;
-    this.current.controller.abort();
+    const entry = this.running.get(job.Id);
+    if (!entry) return false;
+    entry.mode = mode;
+    entry.controller.abort();
     job.Message = 'Stopping after the current step…';
     this.store.save(job);
     return true;
@@ -702,7 +734,7 @@ class Scheduler {
   startNow(id) {
     const job = this.find(id);
     if (job.State === 'completed' || job.State === 'submitted') throw new ApiError(409, 'This video already finished; there is nothing to start.');
-    if (this.current && this.current.job === job) return job;
+    if (this.running.has(job.Id)) return job;
     Object.assign(job, {
       State: 'queued', RetryReason: '', PausedByUser: false, WatchLater: false, AutoRetryAttempts: 0, AutoRetryAfterUtc: null,
       Message: 'Starting now at your request; it runs as soon as the server browser is free.',
@@ -721,7 +753,7 @@ class Scheduler {
 
   clearProgress(id) {
     const job = this.find(id);
-    if (this.current && this.current.job === job) throw new ApiError(409, 'This video is still being processed. Stop it first.');
+    if (this.running.has(job.Id)) throw new ApiError(409, 'This video is still being processed. Stop it first.');
     resetProgress(job);
     this.store.clearResult(job);
     Object.assign(job, {
@@ -816,7 +848,7 @@ class Scheduler {
 
   // "Stop helper": remotely this stops all work and holds the queue (see module comment).
   stopAll() {
-    if (this.current) this.cancelCurrent(this.current.job, 'helper');
+    for (const entry of [...this.running.values()]) this.cancelCurrent(entry.job, 'helper');
     this.hold('restart', 'All work was stopped from the dashboard.');
   }
 
@@ -839,7 +871,6 @@ class Scheduler {
       throw new ApiError(409, 'Only an ambiguous send with no saved result link can be reconciled this way.');
     }
     if (!this.attachRunner) throw new ApiError(501, 'Attaching a conversation is not available on this server.');
-    if (this.current) throw new ApiError(409, 'A video is running in the server browser. Try again when it finishes.');
     const text = await this.attachRunner(parsed.href);
     this.store.setResult(job, text);
     Object.assign(job, {
@@ -962,12 +993,19 @@ class Scheduler {
       valid = true;
     }
     if (body.summaryLanguage !== undefined) valid = true; // always Hebrew, as on Windows
+    if (body.maxConcurrent !== undefined) {
+      const n = Number(body.maxConcurrent);
+      if (!Number.isInteger(n) || n < 1 || n > 3) throw new ApiError(400, 'Videos at the same time must be 1, 2 or 3.');
+      next.maxConcurrent = n;
+      valid = true;
+    }
     if (!valid) throw new ApiError(400, 'Provide a valid summaryLevel, summaryLanguage, keepIntermediateTabs, and/or enabledProviders.');
     this.store.saveSettings(next);
     this.settings = next;
+    setImmediate(() => this.pump()); // a higher limit can start waiting videos now
     return {
       summaryLevel: next.summaryLevel, enabledProviders: next.enabledProviders,
-      summaryLanguage: 'hebrew', keepIntermediateTabs: next.keepIntermediateTabs,
+      summaryLanguage: 'hebrew', keepIntermediateTabs: next.keepIntermediateTabs, maxConcurrent: this.maxConcurrent,
     };
   }
 }
@@ -1003,7 +1041,7 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/searches/delete': scheduler.store.deleteSearch(body.id); return { deleted: true };
     case '/api/browser/restart':
       if (!scheduler.recycleBrowser) throw new ApiError(501, 'Browser restart is not available on this server.');
-      if (scheduler.current || scheduler.recycling) throw new ApiError(409, 'A video is running (or a restart is underway). Try again when it finishes.');
+      if (scheduler.busy || scheduler.recycling) throw new ApiError(409, 'A video is running (or a restart is underway). Try again when it finishes.');
       await scheduler.restartBrowser('requested from the dashboard');
       return { restarted: true };
     case '/api/sources/run': return scheduler.runSource(body.id, { labelOnly: body.labelOnly === true });

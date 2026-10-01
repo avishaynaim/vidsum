@@ -155,6 +155,7 @@ async function testIpRotation() {
     releases[args.videoId] = () => resolve({ text: 'x', provider: 'ChatGPT' });
   });
   const store = new JobStore(fs.mkdtempSync(path.join(os.tmpdir(), 'yt-ip-test-')));
+  store.saveSettings({ ...store.loadSettings(), maxConcurrent: 1 }); // this flow is one-at-a-time
   const queue = new Scheduler({ store, runner, fetchTitle: async () => '' });
   let releaseRotation;
   const rotation = new IpRotation({ queue, runner: () => new Promise((r) => { releaseRotation = r; }) });

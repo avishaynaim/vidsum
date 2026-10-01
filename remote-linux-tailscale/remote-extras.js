@@ -29,6 +29,18 @@
   const ipValue = el('b', {}, '…');
   const ipState = el('p', { className: 'muted' });
   const rotate = el('button', {}, 'Change IP now');
+  // How many videos run at the same time (one AI step per site at a time, so up to 3).
+  const parallel = el('select', { id: 'max-concurrent' },
+    ...[1, 2, 3].map((n) => el('option', { value: String(n) }, n === 1 ? '1 (one at a time)' : `${n} at the same time`)));
+  parallel.addEventListener('change', async () => {
+    parallel.disabled = true;
+    try { await post('/api/settings', { maxConcurrent: Number(parallel.value) }); }
+    catch (error) { alert(`Could not save: ${error.message}`); }
+    finally { parallel.disabled = false; }
+  });
+  const parallelBlock = el('div', {},
+    el('div', { className: 'panel-title', style: 'margin-top:12px' }, 'Videos at the same time'), parallel,
+    el('p', { className: 'muted' }, 'Up to 3 videos run together, each on a different AI site (about 3× faster). Extra videos only start while the server has at least 1.5 GB of memory free.'));
   // Always-visible copy of the IP control in the sticky top bar (the panel sits below the
   // video list on phones).
   const topIp = el('button', { id: 'topbar-ip', type: 'button', hidden: true, title: 'Change the public IP' }, 'IP …');
@@ -40,7 +52,7 @@
     el('div', { className: 'panel-title', style: 'margin-top:12px' }, 'Internet address'),
     el('p', {}, 'Public IP: ', ipValue), ipState, rotate,
     el('p', { className: 'muted' }, 'Reconnects the home router for a new public IP. The server (and this page) is offline for about 1–2 minutes, then reconnects by itself. Not allowed while a video is running.'));
-  panel.append(el('div', { className: 'panel-title' }, 'Remote server'), signInBlock, ipBlock);
+  panel.append(el('div', { className: 'panel-title' }, 'Remote server'), signInBlock, parallelBlock, ipBlock);
 
   function mount() {
     const status = document.querySelector('.col .panel');
@@ -764,7 +776,10 @@
   if (addPanel) addPanel.append(importBlock);
   loadSources();
   setInterval(loadSources, 60000); // pick up the server's background counts
-  api('/api/status').then((status) => { if (LEVEL_NAMES[status.summaryLevel]) importLevel.value = status.summaryLevel; }).catch(() => {});
+  api('/api/status').then((status) => {
+    if (LEVEL_NAMES[status.summaryLevel]) importLevel.value = status.summaryLevel;
+    if (status.maxConcurrent) parallel.value = String(status.maxConcurrent);
+  }).catch(() => {});
   api('/config').then((config) => {
     signInBlock.hidden = !config.signIn;
     ipBlock.hidden = !config.ipRotation;

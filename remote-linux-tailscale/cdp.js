@@ -19,6 +19,22 @@ async function newTab(url) {
   return res.json();
 }
 
+// Opens a page in a NEW WINDOW (Target.createTarget newWindow) and returns { id, webSocketDebuggerUrl }.
+// Several videos run AI steps at once; a background tab is hidden (timers/rendering paused),
+// while separate windows on the virtual screen all stay visible.
+async function newWindow(url) {
+  const res = await fetch(`${cdpBase()}/json/version`);
+  if (!res.ok) throw new Error(`Target.createTarget failed: CDP /json/version HTTP ${res.status}`);
+  const browserWs = await connect((await res.json()).webSocketDebuggerUrl);
+  try {
+    const { targetId } = await sendCommand(browserWs, 'Target.createTarget', { url, newWindow: true }, 15000);
+    const base = cdpBase().replace(/^http/, 'ws');
+    return { id: targetId, webSocketDebuggerUrl: `${base}/devtools/page/${targetId}` };
+  } finally {
+    browserWs.close();
+  }
+}
+
 async function closeTab(targetId) {
   const res = await fetch(`${cdpBase()}/json/close/${targetId}`);
   return res.ok;
@@ -96,5 +112,5 @@ function hostOf(url) {
 }
 
 module.exports = {
-  hostOf, listTargets, newTab, closeTab, connect, sendCommand, evaluate, isTransientInfrastructureError,
+  hostOf, listTargets, newWindow, newTab, closeTab, connect, sendCommand, evaluate, isTransientInfrastructureError,
 };

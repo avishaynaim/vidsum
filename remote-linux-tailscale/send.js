@@ -243,8 +243,8 @@ async function pollForReply(ws, cfg, baseline, { timeoutMs = 600000, pollMs = 15
 async function sendToProvider(providerName, prompt, options = {}) {
   const cfg = providers[providerName];
   if (!cfg) throw new Error(`Unknown provider: ${providerName}`);
-  // A new tab for this stage only (see the module comment); closed when the stage ends.
-  const target = await cdp.newTab('about:blank');
+  // A new window for this stage only (see the module comment); closed when the stage ends.
+  const target = await cdp.newWindow('about:blank');
   let ws;
   try {
     ws = await cdp.connect(target.webSocketDebuggerUrl);

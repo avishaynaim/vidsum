@@ -14,6 +14,12 @@ const { buildDashboard } = require('../remote-dashboard');
 
 const tick = () => new Promise((r) => setImmediate(r));
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'yt-dash-test-'));
+// A store whose settings run one video at a time (what most of these flows assert).
+function serialStore(dir = tmpDir()) {
+  const store = new JobStore(dir);
+  if (!fs.existsSync(path.join(dir, 'settings.json'))) store.saveSettings({ ...store.loadSettings(), maxConcurrent: 1 });
+  return store;
+}
 
 // A runner whose videos finish only when the test says so.
 function controllableRunner() {
@@ -33,7 +39,7 @@ function controllableRunner() {
 }
 
 function makeScheduler(dir = tmpDir(), runner = controllableRunner().runner) {
-  const store = new JobStore(dir);
+  const store = serialStore(dir);
   const scheduler = new Scheduler({ store, runner, fetchTitle: async () => '' });
   return { store, scheduler, dir };
 }
@@ -494,9 +500,80 @@ async function testSearch() {
   await assert.rejects(handleApi(scheduler, 'POST', '/api/searches/save', { id: saved.id, query: 'לולב' }), (e) => e.status === 409);
 }
 
+async function testParallel() {
+  const fake = controllableRunner();
+  const store = new JobStore(tmpDir()); // default settings: 3 at once
+  let free = 8000;
+  const scheduler = new Scheduler({ store, runner: fake.runner, fetchTitle: async () => '', memoryAvailable: () => free });
+  assert.strictEqual(scheduler.status().maxConcurrent, 3);
+  const ids = ['P1xxxxxxxxx', 'P2xxxxxxxxx', 'P3xxxxxxxxx', 'P4xxxxxxxxx'];
+  for (const id of ids) await add(scheduler, id);
+  await tick();
+  const state = () => ids.map((id) => store.jobs.find((j) => j.VideoId === id).State);
+  assert.deepStrictEqual(state(), ['gemini', 'gemini', 'gemini', 'queued'], 'three videos run at once, the 4th waits');
+  fake.pending.get('P2xxxxxxxxx').resolve({ text: 'x', provider: 'Claude' });
+  await tick(); await tick();
+  assert.deepStrictEqual(state(), ['gemini', 'completed', 'gemini', 'gemini'], 'a free slot starts the next one');
+
+  // Stopping one running video leaves the others running.
+  await handleApi(scheduler, 'POST', '/api/stop-job', { jobId: store.jobs.find((j) => j.VideoId === 'P1xxxxxxxxx').Id });
+  await tick(); await tick();
+  assert.deepStrictEqual(state(), ['cancelled', 'completed', 'gemini', 'gemini']);
+
+  // Low memory: no additional parallel videos start (one always may).
+  free = 900;
+  await add(scheduler, 'P5xxxxxxxxx');
+  await tick();
+  assert.strictEqual(store.jobs.find((j) => j.VideoId === 'P5xxxxxxxxx').State, 'queued', 'low memory holds extra videos');
+  free = 8000;
+  fake.pending.get('P3xxxxxxxxx').resolve({ text: 'x', provider: 'Claude' });
+  await tick(); await tick();
+  assert.strictEqual(store.jobs.find((j) => j.VideoId === 'P5xxxxxxxxx').State, 'gemini');
+
+  // The setting: 1 at a time; validation.
+  const saved = await handleApi(scheduler, 'POST', '/api/settings', { maxConcurrent: 1 });
+  assert.strictEqual(saved.maxConcurrent, 1);
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/settings', { maxConcurrent: 4 }), (e) => e.status === 400);
+  ['P4xxxxxxxxx', 'P5xxxxxxxxx'].forEach((id) => fake.pending.get(id).resolve({ text: 'x', provider: 'Claude' }));
+  await tick(); await tick();
+
+  // A due browser restart waits until every running video has finished.
+  const store2 = new JobStore(tmpDir());
+  let restarts = 0;
+  const s2 = new Scheduler({ store: store2, runner: fake.runner, fetchTitle: async () => '', recycleBrowser: async () => { restarts++; }, memoryAvailable: () => 8000 });
+  s2.videosSinceRecycle = 9;
+  for (const id of ['Q1xxxxxxxxx', 'Q2xxxxxxxxx']) await add(s2, id);
+  await tick();
+  fake.pending.get('Q1xxxxxxxxx').resolve({ text: 'x', provider: 'Claude' });
+  await tick(); await tick();
+  assert.strictEqual(restarts, 0, 'not while Q2 still uses the browser');
+  fake.pending.get('Q2xxxxxxxxx').resolve({ text: 'x', provider: 'Claude' });
+  await tick(); await tick();
+  assert.strictEqual(restarts, 1, 'restarted once both finished');
+}
+
+async function testProviderPool() {
+  const { ProviderPool } = require('../rotate');
+  const pool = new ProviderPool();
+  const order = ['ChatGPT', 'Gemini', 'Claude'];
+  const a = await pool.acquire(order, new Set());
+  const b = await pool.acquire(order, new Set());
+  assert.deepStrictEqual([a, b], ['ChatGPT', 'Gemini'], 'a busy provider is skipped for a free one');
+  const c = await pool.acquire(order, new Set(['Gemini']));
+  assert.strictEqual(c, 'Claude');
+  let got = null;
+  const waiting = pool.acquire(order, new Set()).then((p) => { got = p; });
+  await tick();
+  assert.strictEqual(got, null, 'all busy: it waits');
+  pool.release('Gemini');
+  await waiting;
+  assert.strictEqual(got, 'Gemini', 'the released provider goes to the waiter');
+  assert.strictEqual(await pool.acquire(order, new Set(order)), null, 'nothing left to try');
+}
+
 async function testBrowserRecycling() {
   const fake = controllableRunner();
-  const store = new JobStore(tmpDir());
+  const store = serialStore();
   let recycles = 0;
   let finishRecycle;
   const scheduler = new Scheduler({
@@ -546,6 +623,8 @@ module.exports = async function run() {
   await testNewVideoCounts();
   await testSearch();
   await testBrowserRecycling();
+  await testParallel();
+  await testProviderPool();
 };
 
 if (require.main === module) {

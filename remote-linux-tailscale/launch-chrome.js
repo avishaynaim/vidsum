@@ -90,6 +90,10 @@ function buildArgs({ port, profileDir, headless, url, windowSize }) {
     // Without this Chrome waits on the desktop keyring before any network request; on a
     // server/virtual screen nothing ever answers, so every page hangs on "Loading...".
     '--password-store=basic',
+    // Several AI steps run at once in separate windows; keep every one running at full speed.
+    '--disable-background-timer-throttling',
+    '--disable-renderer-backgrounding',
+    '--disable-backgrounding-occluded-windows',
   ];
   if (headless) args.push('--headless=new');
   else if (windowSize) args.push(`--window-size=${windowSize.width},${windowSize.height}`, '--window-position=0,0');
