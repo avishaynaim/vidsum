@@ -683,6 +683,22 @@ class Scheduler {
     return job;
   }
 
+  // Every failed video from any day (the dashboard's own button only covers today's).
+  retryAllFailed() {
+    const failed = this.store.jobs.filter((j) => j.State === 'error' && !j.WatchLater);
+    for (const job of failed) {
+      Object.assign(job, {
+        State: 'queued', RetryReason: '', PausedByUser: false, AutoRetryAttempts: 0, AutoRetryAfterUtc: null,
+        Message: 'Retrying from its saved checkpoint.',
+      });
+      this.store.save(job);
+    }
+    if (failed.length) {
+      if (this.pauseKind === 'restart') this.clearHold(); else this.pump();
+    }
+    return { retried: failed.length };
+  }
+
   startNow(id) {
     const job = this.find(id);
     if (job.State === 'completed' || job.State === 'submitted') throw new ApiError(409, 'This video already finished; there is nothing to start.');
@@ -970,6 +986,7 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/resume': scheduler.resume(); return { paused: false, pauseReason: '' };
     case '/api/stop': scheduler.stopAll(); return { stopping: true };
     case '/api/retry': return scheduler.retry(body.jobId);
+    case '/api/retry-failed': return scheduler.retryAllFailed();
     case '/api/clear': scheduler.clearProgress(body.jobId); return { cleared: true };
     case '/api/start-job': return scheduler.startNow(body.jobId);
     case '/api/stop-job': scheduler.stopJob(body.jobId); return { stopping: true };

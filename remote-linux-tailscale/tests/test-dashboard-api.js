@@ -137,6 +137,14 @@ async function testFailuresAndRetries() {
   await tick(); await tick();
   assert.strictEqual(job.State, 'error');
   assert.strictEqual(job.AutoRetryAfterUtc, null, 'a non-retryable failure is not retried automatically');
+  // "Retry all failed" brings back failed videos from any day.
+  job.CreatedAt = '2020-01-01T00:00:00.000Z';
+  assert.deepStrictEqual(await handleApi(scheduler, 'POST', '/api/retry-failed', {}), { retried: 1 });
+  await tick();
+  assert.notStrictEqual(job.State, 'error');
+  assert.strictEqual(job.AutoRetryAttempts, 0, 'a manual retry gets a fresh automatic-retry budget');
+  fake.pending.get('CCCCCCCCCCC').reject(new Error('No caption tracks are available for this video.'));
+  await tick(); await tick();
   assert.deepStrictEqual(await handleApi(scheduler, 'POST', '/api/clear-errors', {}), { cleared: 1 });
 }
 

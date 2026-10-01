@@ -552,6 +552,30 @@
     loadSaved();
   });
 
+  // "Retry all failed (N)": failed videos from any day, next to the dashboard's Clear failed.
+  const retryFailed = el('button', { id: 'retry-all-failed', type: 'button', hidden: true });
+  let failedCount = 0;
+  async function refreshFailed() {
+    try {
+      const status = await api('/api/status');
+      failedCount = status.jobs.filter((j) => j.State === 'error' && !j.WatchLater).length;
+      retryFailed.hidden = failedCount === 0;
+      if (!retryFailed.disabled) retryFailed.textContent = `Retry all failed (${failedCount})`;
+    } catch { /* offline */ }
+  }
+  retryFailed.addEventListener('click', async () => {
+    if (!confirm(`Retry all ${failedCount} failed videos? Each continues from its saved progress, and the queue starts.`)) return;
+    retryFailed.disabled = true;
+    retryFailed.textContent = 'Retrying…';
+    try {
+      const r = await post('/api/retry-failed', {});
+      retryFailed.textContent = `Queued ${r.retried} for retry`;
+    } catch (error) {
+      retryFailed.textContent = `Retry failed: ${error.message}`;
+    }
+    setTimeout(() => { retryFailed.disabled = false; refreshFailed(); }, 4000);
+  });
+
   // Tapping anywhere on a tile except its own buttons/links/menus opens the viewer.
   document.addEventListener('click', (event) => {
     const card = event.target.closest('.job-card[data-job-id]');
@@ -732,6 +756,10 @@
   document.body.append(viewer, searchDialog);
   const topState = document.querySelector('.topbar #state');
   if (topState) topIp.before(searchButton);
+  const clearFailed = document.querySelector('#clear-errors');
+  if (clearFailed) clearFailed.before(retryFailed);
+  refreshFailed();
+  setInterval(refreshFailed, 10000);
   const addPanel = document.querySelector('section.panel:has(#batch)');
   if (addPanel) addPanel.append(importBlock);
   loadSources();
