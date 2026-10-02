@@ -51,6 +51,7 @@ assert.deepStrictEqual(chooseYtDlpTrack({ language: null, subtitles: {}, automat
 assert.strictEqual(chooseYtDlpTrack({ subtitles: {}, automatic_captions: {} }), null);
 assert.deepStrictEqual(chooseYtDlpTrack({ language: 'en', subtitles: { en: [], iw: [] }, automatic_captions: {} }), { lang: 'iw', auto: false });
 assert.deepStrictEqual(chooseYtDlpTrack({ language: 'en', subtitles: {}, automatic_captions: { 'en-orig': [], iw: [] } }), { lang: 'en-orig', auto: true }, 'machine-translated Hebrew is not preferred over the real original');
+assert.deepStrictEqual(chooseYtDlpTrack({ language: 'iw', subtitles: {}, automatic_captions: { 'en-orig': [], en: [], iw: [], fr: [] } }), { lang: 'en-orig', auto: true }, 'a Hebrew video auto-captioned in English never asks for the translated iw track (429)');
 
 const cdpMod = require('../cdp');
 assert.strictEqual(cdpMod.hostOf('https://accounts.google.com/signin?origin=https%3A%2F%2Fclaude.ai'), 'accounts.google.com');

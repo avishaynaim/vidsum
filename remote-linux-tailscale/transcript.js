@@ -147,7 +147,13 @@ function runYtDlp(bin, args) {
 // Returns { lang, auto } or null.
 function chooseYtDlpTrack(info) {
   const manual = Object.keys(info.subtitles || {}).filter((k) => k !== 'live_chat');
-  const auto = Object.keys(info.automatic_captions || {});
+  // YouTube lists every language as an automatic track, but all except the "-orig" one (and its
+  // plain twin, "en" for "en-orig") are machine translations of it. Those are refused with
+  // HTTP 429 almost every time, which looked like a rate limit on this server, so they are
+  // never picked.
+  const allAuto = Object.keys(info.automatic_captions || {});
+  const origBases = new Set(allAuto.filter((k) => k.endsWith('-orig')).map((k) => k.slice(0, -5)));
+  const auto = origBases.size ? allAuto.filter((k) => k.endsWith('-orig') || origBases.has(k)) : allAuto;
   const videoLang = String(info.language || '').toLowerCase();
   const sameLang = (k) => videoLang && (k.toLowerCase() === videoLang || k.toLowerCase().startsWith(`${videoLang}-`));
   // Hebrew first (YouTube calls it "iw"): creator-made, then auto-generated original. The
@@ -167,6 +173,8 @@ function chooseYtDlpTrack(info) {
   const autoSame = auto.find(sameLang);
   if (autoSame) return { lang: autoSame, auto: true };
   if (manual.length) return { lang: manual.find((k) => k.startsWith('en')) || manual[0], auto: false };
+  const anyOrig = auto.find((k) => k.endsWith('-orig'));
+  if (anyOrig) return { lang: anyOrig, auto: true };
   if (auto.length) return { lang: auto.find((k) => k === 'en') || auto[0], auto: true };
   return null;
 }
@@ -187,7 +195,8 @@ async function fetchTranscriptWithYtDlp(videoId, bin) {
     const lines = parseJson3(fs.readFileSync(path.join(dir, file), 'utf8'));
     const text = lines.join(' ').replace(/\s+/g, ' ').trim();
     if (!text) throw new Error('Caption track produced no text after parsing.');
-    return { text, title: info.title || videoId, durationSeconds: Math.round(Number(info.duration) || 0) };
+    return { text, title: info.title || videoId, durationSeconds: Math.round(Number(info.duration) || 0),
+      language: track.lang, videoLanguage: String(info.language || '') };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -257,7 +266,20 @@ async function fetchTranscript(videoId, { onStatus = () => {}, whisper = false, 
   if (!noCaptionsConfirmed) {
     let captionError;
     try {
-      return await paced(() => fetchCaptions(videoId));
+      const captions = await paced(() => fetchCaptions(videoId));
+      // A Hebrew lecture whose only captions are in another language (YouTube sometimes
+      // auto-captions Hebrew speech as English): a real Hebrew transcript from the audio is
+      // better; the foreign captions are kept in case that fails (the summary is Hebrew anyway).
+      const hebrew = (lang) => /^(iw|he)(-|$)/i.test(lang || '');
+      const audioBin = hebrew(captions.videoLanguage) && captions.language && !hebrew(captions.language) && findYtTranscript();
+      if (!audioBin) return captions;
+      onStatus(`No Hebrew captions (only ${captions.language}); transcribing the Hebrew audio instead (takes a few minutes)...`);
+      try {
+        return await transcribeAudio(videoId, audioBin);
+      } catch (err) {
+        onStatus(`Audio transcription failed (${err.message}); using the ${captions.language} captions instead.`);
+        return captions;
+      }
     } catch (err) {
       captionError = err;
     }
