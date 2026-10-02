@@ -23,6 +23,9 @@ const PROVIDERS = ['ChatGPT', 'Gemini', 'Claude'];
 const TERMINAL = ['submitted', 'completed', 'error', 'needs-review', 'reviewed', 'cancelled'];
 const AUTO_RETRY_LIMIT = 2;
 const AUTO_RETRY_DELAY_MS = 2 * 60 * 1000;
+// A YouTube rate limit on transcript downloads (transcript.js) gets more, longer-spaced retries.
+const RATE_LIMIT_RETRIES = 6;
+const RATE_LIMIT_DELAY_MS = 20 * 60 * 1000;
 const MAX_UNFINISHED = 200;
 // Finished jobs kept (the Windows helper keeps 100). Higher here: on the server the summary
 // text lives with the job, and one channel import can add 50 at once.
@@ -657,7 +660,14 @@ class Scheduler {
           ? 'The server browser stopped responding. It is being restarted; this video retries automatically.'
           : err.message;
         job.RetryReason = err.message;
-        if (err.retryable && job.AutoRetryAttempts < AUTO_RETRY_LIMIT) {
+        if (err.rateLimited && job.AutoRetryAttempts < RATE_LIMIT_RETRIES) {
+          // YouTube's block on this IP outlasts the normal 2-minute retry: wait 20 min, 40, 80...
+          const delay = Math.min(RATE_LIMIT_DELAY_MS * 2 ** job.AutoRetryAttempts, 4 * 3600 * 1000);
+          job.AutoRetryAttempts += 1;
+          job.AutoRetryAfterUtc = new Date(Date.now() + delay).toISOString();
+          job.Message = `YouTube is limiting transcript downloads from this server right now. ` +
+            `Retrying automatically in ${Math.round(delay / 60000)} minutes (attempt ${job.AutoRetryAttempts} of ${RATE_LIMIT_RETRIES}).`;
+        } else if (err.retryable && job.AutoRetryAttempts < AUTO_RETRY_LIMIT) {
           job.AutoRetryAttempts += 1;
           job.AutoRetryAfterUtc = new Date(Date.now() + AUTO_RETRY_DELAY_MS).toISOString();
         } else {

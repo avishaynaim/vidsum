@@ -193,12 +193,84 @@ async function fetchTranscriptWithYtDlp(videoId, bin) {
   }
 }
 
+// --- pacing, rate limits and the audio fallback ----------------------------------------
+// YouTube blocks this server's IP (HTTP 429) after a burst of caption downloads, e.g. several
+// videos starting together after a restart, and the block lasts well over 10 minutes. So
+// caption fetches run one at a time with a gap between them, and a block is reported as
+// `rateLimited` (retry much later) instead of looking like "no captions".
+const CAPTION_GAP_MS = Number(process.env.YT_CAPTION_GAP_MS) || 15000;
+let captionQueue = Promise.resolve();
+let lastCaptionStart = 0;
+
+function paced(fn) {
+  const run = captionQueue.then(async () => {
+    const wait = lastCaptionStart + CAPTION_GAP_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastCaptionStart = Date.now();
+    return fn();
+  });
+  captionQueue = run.catch(() => {});
+  return run;
+}
+
+const RATE_LIMITED = /\b429\b|Too Many Requests|RequestBlocked|confirm you.re not a bot/i;
+const NO_CAPTIONS = /No caption tracks are available/;
+
+// Videos with no captions at all (YouTube never auto-captioned them) are transcribed from
+// their audio by ~/apps/yt-transcript (NotebookLM). One at a time: it downloads ~20 MB per
+// hour of video and takes minutes.
+function findYtTranscript(deps = {}) {
+  const exists = deps.exists || fs.existsSync;
+  return [process.env.YT_TRANSCRIPT_BIN, path.join(os.homedir(), 'apps', 'yt-transcript', '.venv', 'bin', 'yt-transcript')]
+    .filter(Boolean).find((c) => exists(c)) || null;
+}
+
+let audioQueue = Promise.resolve();
+
+function transcribeAudio(videoId, bin) {
+  const run = audioQueue.then(() => new Promise((resolve, reject) => {
+    execFile(bin, ['--json', '-q', '--retry-failed', '--lang', 'iw', '--lang', 'he', videoId],
+      { maxBuffer: 64 * 1024 * 1024, timeout: 90 * 60 * 1000 }, (err, stdout, stderr) => {
+        let out = null;
+        try { out = JSON.parse(stdout); } catch { /* reported below */ }
+        const t = out && out.transcripts && out.transcripts[0];
+        if (t && t.text) return resolve({ text: t.text, title: t.title || videoId, durationSeconds: 0 });
+        const why = (out && out.failures && out.failures[0] && out.failures[0].error)
+          || String(stderr).trim().split('\n').pop() || (err && err.message) || 'no text';
+        reject(new Error(`audio transcription failed: ${why}`));
+      });
+  }));
+  audioQueue = run.catch(() => {});
+  return run;
+}
+
 /**
- * Fetches the transcript text and best-effort title for a public YouTube video, via yt-dlp
- * when available, else the direct watch-page method below.
+ * Fetches the transcript text and best-effort title for a public YouTube video: captions via
+ * yt-dlp (else the direct watch-page method below), and for a video with no captions at all,
+ * a transcription of its audio. A YouTube block is thrown with `rateLimited: true`.
  */
-async function fetchTranscript(videoId) {
+async function fetchTranscript(videoId, { onStatus = () => {} } = {}) {
   assertValidVideoId(videoId);
+  let captionError;
+  try {
+    return await paced(() => fetchCaptions(videoId));
+  } catch (err) {
+    captionError = err;
+  }
+  if (RATE_LIMITED.test(captionError.message)) {
+    throw Object.assign(new Error(`YouTube is rate-limiting this server right now (${captionError.message})`), { rateLimited: true });
+  }
+  const bin = NO_CAPTIONS.test(captionError.message) ? findYtTranscript() : null;
+  if (!bin) throw captionError;
+  onStatus('This video has no captions on YouTube; transcribing its audio instead (takes a few minutes)...');
+  try {
+    return await transcribeAudio(videoId, bin);
+  } catch (err) {
+    throw Object.assign(new Error(`This video has no captions on YouTube, and ${err.message}`), { rateLimited: RATE_LIMITED.test(err.message) });
+  }
+}
+
+async function fetchCaptions(videoId) {
   const bin = findYtDlp();
   if (!bin) return fetchTranscriptDirect(videoId);
   try {
@@ -249,4 +321,4 @@ async function fetchTranscriptDirect(videoId) {
   return { text, title, durationSeconds };
 }
 
-module.exports = { fetchTranscript, fetchTranscriptDirect, assertValidVideoId, chooseYtDlpTrack, findYtDlp, runYtDlp };
+module.exports = { fetchTranscript, fetchTranscriptDirect, assertValidVideoId, chooseYtDlpTrack, findYtDlp, runYtDlp, findYtTranscript, RATE_LIMITED };
