@@ -217,3 +217,22 @@ mark.search-hit.current { background: #ff9f1c; outline: 2px solid #fff; }
 
 /* Videos at the same time */
 #max-concurrent { width: 100%; margin-top: 4px; }
+
+/* Video thumbnail + channel avatar on each tile, picture on each saved channel/playlist (thumbs.js). */
+.job-card .job-pics { float: left; position: relative; margin: 2px 12px 8px 0; line-height: 0; }
+.job-card .job-thumb { width: 168px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: var(--panel-2); display: block; }
+.job-card .job-avatar { position: absolute; right: -6px; bottom: -6px; width: 34px; height: 34px; border-radius: 50%;
+  border: 2px solid var(--panel); background: var(--panel-2); object-fit: cover; }
+.job-card .job-avatar[hidden] { display: none; }
+.job-card::after { content: ""; display: block; clear: both; }
+@media (max-width: 520px) {
+  .job-card .job-thumb { width: 116px; }
+  .job-card .job-avatar { width: 28px; height: 28px; }
+}
+#sources-block .source-row { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: start; }
+#sources-block .source-row > :not(.source-pic) { grid-column: 2; }
+#sources-block .source-row > * + * { margin-top: 0; }
+#sources-block .source-row > :not(.source-pic) + * { margin-top: 4px; }
+#sources-block .source-pic { grid-column: 1; grid-row: 1 / span 6; width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background: var(--panel); }
+#sources-block .source-pic.playlist { width: 72px; height: 41px; border-radius: 6px; }
+#sources-block .source-pic[hidden] { display: none; }

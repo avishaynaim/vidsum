@@ -53,6 +53,7 @@ const { runVideo } = require('./cli');
 const netGuard = require('./net-guard');
 const { JobStore, Scheduler, handleApi } = require('./dashboard-api');
 const { buildDashboard } = require('./remote-dashboard');
+const { Thumbs, handleThumb } = require('./thumbs');
 
 const COOKIE_NAME = 'ytsum_token';
 
@@ -369,6 +370,7 @@ function createServer({
   const store = new JobStore(stateDir || fs.mkdtempSync(path.join(os.tmpdir(), 'yt-summary-state-')));
   const scheduler = new Scheduler({ store, runner, attachRunner, browserReady, recycleBrowser, log: (msg) => log(msg) });
   const rotation = new IpRotation({ runner: rotatorRunner, queue: scheduler });
+  const thumbs = new Thumbs(store.dir);
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -416,6 +418,8 @@ function createServer({
         sendPage(res, page, 'text/html; charset=utf-8', headers);
         return;
       }
+
+      if (url.pathname.startsWith('/thumb/') && req.method === 'GET' && await handleThumb(thumbs, url, res)) return;
 
       if (url.pathname.startsWith('/api/')) {
         let body = null;

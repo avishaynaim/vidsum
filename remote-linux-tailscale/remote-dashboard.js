@@ -70,6 +70,14 @@ const SCRIPT_REPLACEMENTS = [
     "      if (!row.source) { row.source = document.createElement('a'); row.source.className = 'job-source'; row.source.target = '_blank'; row.source.rel = 'noopener noreferrer'; row.title.after(row.source); }\n" +
     "      row.source.textContent = job.SourceTitle ? `From ${job.SourceKind === 'playlist' ? 'playlist' : 'channel'}: \\u2068${job.SourceTitle}\\u2069` : 'Single video';\n" +
     "      if (job.SourceUrl) row.source.href = job.SourceUrl; else row.source.removeAttribute('href');"],
+  // Each tile shows the video's thumbnail with its channel's avatar on the corner (thumbs.js).
+  ["        element.append(head, meta, message, actions);",
+    "        element.append(head, meta, message, actions);\n" +
+    "        { const pics = document.createElement('a'); pics.className = 'job-pics'; pics.href = link.href; pics.target = '_blank'; pics.rel = 'noopener noreferrer';\n" +
+    "          const thumb = document.createElement('img'); thumb.className = 'job-thumb'; thumb.loading = 'lazy'; thumb.alt = ''; thumb.src = `https://i.ytimg.com/vi/${encodeURIComponent(job.VideoId)}/mqdefault.jpg`;\n" +
+    "          const avatar = document.createElement('img'); avatar.className = 'job-avatar'; avatar.loading = 'lazy'; avatar.alt = ''; avatar.onerror = () => { avatar.hidden = true; };\n" +
+    "          avatar.src = `/thumb/channel?video=${encodeURIComponent(job.VideoId)}&token=${encodeURIComponent(token || '')}`;\n" +
+    "          pics.append(thumb, avatar); element.prepend(pics); }"],
   // Search also matches the channel/playlist name.
   ["const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''}`.toLowerCase();",
     "const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''} ${job.SourceTitle || ''}`.toLowerCase();"],

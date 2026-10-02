@@ -696,7 +696,12 @@
       catch (error) { status.textContent = error.message; }
     });
     const settings = source.kind === 'channel' ? `Channel · latest ${source.limit || 1}` : 'Playlist · all videos';
+    const pic = el('img', { className: 'source-pic', loading: 'lazy', alt: '',
+      src: `/thumb/list?url=${encodeURIComponent(source.url)}&token=${encodeURIComponent(token())}` });
+    pic.classList.toggle('playlist', source.kind !== 'channel');
+    pic.onerror = () => { pic.hidden = true; };
     return el('div', { className: 'source-row' },
+      pic,
       el('a', { className: 'source-title', href: source.url, target: '_blank', rel: 'noopener noreferrer', dir: 'auto' },
         // Entries saved before names were cleaned may still end in yt-dlp's " - Videos".
         (source.title || source.url).replace(/\s+-\s+(Videos|Streams|Shorts|Live)$/i, '')),
