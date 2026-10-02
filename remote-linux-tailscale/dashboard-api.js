@@ -219,7 +219,7 @@ function newJob({ videoId, requestId, title, summaryLevel, watchLater }) {
     Progress: '', RetryReason: '', TranscriptHash: '', TranscriptLength: 0, ChunkCount: 0,
     SuccessfulParts: 0, PausedByUser: false, WatchLater: !!watchLater, TranscriptSaved: false,
     AmbiguousTargetId: '', AmbiguousTextSha256: '', ReconcileAttempted: false,
-    AutoRetryAttempts: 0, AutoRetryAfterUtc: null, FinalResult: '', CreatedAt: at, UpdatedAt: at, Sequence: 0,
+    AutoRetryAttempts: 0, AutoRetryAfterUtc: null, WaitUntilUtc: null, FinalResult: '', CreatedAt: at, UpdatedAt: at, Sequence: 0,
   };
 }
 
@@ -590,7 +590,8 @@ class Scheduler {
         this.memoryLimited = true;
         return;
       }
-      const job = this.store.jobs.find((j) => j.State === 'queued' && !j.WatchLater && !this.running.has(j.Id));
+      const waiting = (j) => j.WaitUntilUtc && Date.parse(j.WaitUntilUtc) > Date.now();
+      const job = this.store.jobs.find((j) => j.State === 'queued' && !j.WatchLater && !this.running.has(j.Id) && !waiting(j));
       if (!job) return;
       this.memoryLimited = false;
       this.run(job); // registers itself in this.running before its first await
@@ -660,13 +661,18 @@ class Scheduler {
           ? 'The server browser stopped responding. It is being restarted; this video retries automatically.'
           : err.message;
         job.RetryReason = err.message;
-        if (err.rateLimited && job.AutoRetryAttempts < RATE_LIMIT_RETRIES) {
-          // YouTube's block on this IP outlasts the normal 2-minute retry: wait 20 min, 40, 80...
-          const delay = Math.min(RATE_LIMIT_DELAY_MS * 2 ** job.AutoRetryAttempts, 4 * 3600 * 1000);
-          job.AutoRetryAttempts += 1;
-          job.AutoRetryAfterUtc = new Date(Date.now() + delay).toISOString();
-          job.Message = `YouTube is limiting transcript downloads from this server right now. ` +
-            `Retrying automatically in ${Math.round(delay / 60000)} minutes (attempt ${job.AutoRetryAttempts} of ${RATE_LIMIT_RETRIES}).`;
+        if (err.rateLimited && (job.RateLimitAttempts || 0) < RATE_LIMIT_RETRIES) {
+          // YouTube's block on this IP outlasts the normal 2-minute retry, and it is not the
+          // video's fault: it goes back in the queue, waiting 20 min, then 40, 80... (pump skips
+          // it until WaitUntilUtc). Start now / Retry skip the wait.
+          const attempts = job.RateLimitAttempts || 0;
+          const delay = Math.min(RATE_LIMIT_DELAY_MS * 2 ** attempts, 4 * 3600 * 1000);
+          job.RateLimitAttempts = attempts + 1;
+          job.WaitUntilUtc = new Date(Date.now() + delay).toISOString();
+          job.State = 'queued';
+          const at = new Date(Date.now() + delay).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
+          job.Message = `Waiting: YouTube is limiting transcript downloads from this server for a while. ` +
+            `Next try at ${at} (${job.RateLimitAttempts} of ${RATE_LIMIT_RETRIES}). Start now tries right away.`;
         } else if (err.retryable && job.AutoRetryAttempts < AUTO_RETRY_LIMIT) {
           job.AutoRetryAttempts += 1;
           job.AutoRetryAfterUtc = new Date(Date.now() + AUTO_RETRY_DELAY_MS).toISOString();
@@ -725,7 +731,7 @@ class Scheduler {
     if (!['error', 'cancelled', 'needs-review'].includes(job.State)) throw new ApiError(409, 'Only a stopped or failed video can be retried.');
     const wasWatchLater = job.WatchLater;
     Object.assign(job, {
-      State: 'queued', RetryReason: '', PausedByUser: false, WatchLater: false, AutoRetryAttempts: 0, AutoRetryAfterUtc: null,
+      State: 'queued', RetryReason: '', PausedByUser: false, WatchLater: false, AutoRetryAttempts: 0, AutoRetryAfterUtc: null, WaitUntilUtc: null,
       Message: wasWatchLater ? 'Retrying from its saved checkpoint. Removed from Watch later so it can actually run.'
         : 'Retrying from its saved checkpoint.',
     });
@@ -739,7 +745,7 @@ class Scheduler {
     const failed = this.store.jobs.filter((j) => j.State === 'error' && !j.WatchLater && inSpace(space)(j));
     for (const job of failed) {
       Object.assign(job, {
-        State: 'queued', RetryReason: '', PausedByUser: false, AutoRetryAttempts: 0, AutoRetryAfterUtc: null,
+        State: 'queued', RetryReason: '', PausedByUser: false, AutoRetryAttempts: 0, AutoRetryAfterUtc: null, WaitUntilUtc: null,
         Message: 'Retrying from its saved checkpoint.',
       });
       this.store.save(job);
@@ -755,7 +761,7 @@ class Scheduler {
     if (job.State === 'completed' || job.State === 'submitted') throw new ApiError(409, 'This video already finished; there is nothing to start.');
     if (this.running.has(job.Id)) return job;
     Object.assign(job, {
-      State: 'queued', RetryReason: '', PausedByUser: false, WatchLater: false, AutoRetryAttempts: 0, AutoRetryAfterUtc: null,
+      State: 'queued', RetryReason: '', PausedByUser: false, WatchLater: false, AutoRetryAttempts: 0, AutoRetryAfterUtc: null, WaitUntilUtc: null,
       Message: 'Starting now at your request; it runs as soon as the server browser is free.',
     });
     // Put it first in line.
@@ -777,7 +783,7 @@ class Scheduler {
     this.store.clearResult(job);
     Object.assign(job, {
       State: 'queued', Message: 'Local transcript and summary progress cleared.', PausedByUser: false,
-      AutoRetryAttempts: 0, AutoRetryAfterUtc: null, clearRequested: true,
+      AutoRetryAttempts: 0, AutoRetryAfterUtc: null, WaitUntilUtc: null, clearRequested: true,
     });
     this.store.save(job);
     if (this.pauseKind === 'restart') this.clearHold(); else this.pump();
@@ -893,7 +899,7 @@ class Scheduler {
     const text = await this.attachRunner(parsed.href);
     this.store.setResult(job, text);
     Object.assign(job, {
-      State: 'completed', ResultUrl: '', AutoRetryAfterUtc: null,
+      State: 'completed', ResultUrl: '', AutoRetryAfterUtc: null, WaitUntilUtc: null,
       Message: 'Reconciled: the answer in the attached conversation was saved as this video\'s summary.',
     });
     this.store.save(job);

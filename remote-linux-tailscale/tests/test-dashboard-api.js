@@ -612,6 +612,28 @@ async function testBrowserRecycling() {
   await tick();
 }
 
+// A YouTube rate limit puts the video back in the queue to wait (not an error), and the queue
+// does not pick it again until its time; Start now skips the wait.
+async function testRateLimitWait() {
+  const fake = controllableRunner();
+  const { store, scheduler } = makeScheduler(tmpDir(), fake.runner);
+  const job = await add(scheduler, 'RRRRRRRRRRR');
+  await tick();
+  fake.pending.get('RRRRRRRRRRR').reject(Object.assign(new Error('429'), { retryable: true, rateLimited: true }));
+  await tick(); await tick();
+  assert.strictEqual(job.State, 'queued');
+  assert.strictEqual(job.RateLimitAttempts, 1);
+  assert.ok(Date.parse(job.WaitUntilUtc) > Date.now() + 19 * 60 * 1000, 'waits about 20 minutes');
+  assert.match(job.Message, /Next try at \d\d:\d\d \(1 of 6\)/);
+  scheduler.pump(); await tick();
+  assert.ok(!fake.pending.has('RRRRRRRRRRR') || !scheduler.running.has(job.Id), 'not picked while waiting');
+  await handleApi(scheduler, 'POST', '/api/start-job', { jobId: job.Id });
+  await tick();
+  assert.strictEqual(job.WaitUntilUtc, null);
+  assert.ok(scheduler.running.has(job.Id), 'Start now runs it right away');
+  void store;
+}
+
 // Torah / regular dashboards: one queue, but each sees and acts on only its own videos,
 // channels and searches; jobs from before the split belong to the Torah one.
 async function testSpaces() {
@@ -652,6 +674,7 @@ module.exports = async function run() {
   await testParallel();
   await testProviderPool();
   await testSpaces();
+  await testRateLimitWait();
 };
 
 if (require.main === module) {
