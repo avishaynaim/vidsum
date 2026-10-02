@@ -245,7 +245,7 @@ async function testServerRoutes() {
     assert.strictEqual(css.headers.get('content-type'), 'text/css; charset=utf-8');
     assert.match(await css.text(), /@media \(max-width: 759px\)/);
     assert.strictEqual((await fetch(`${base}/server.js`)).status, 401, 'only the listed static files are public');
-    const page = await fetch(`${base}/`, { headers: { Cookie: 'ytsum_token=route-test-token' } });
+    const page = await fetch(`${base}/torah`, { headers: { Cookie: 'ytsum_token=route-test-token' } });
     const pageText = await page.text();
     assert.match(pageText, /Video jobs/);
     // app.js requires a 64-hex key: the page is seeded with the derived one, which also works.
@@ -612,6 +612,32 @@ async function testBrowserRecycling() {
   await tick();
 }
 
+// Torah / regular dashboards: one queue, but each sees and acts on only its own videos,
+// channels and searches; jobs from before the split belong to the Torah one.
+async function testSpaces() {
+  const fake = controllableRunner();
+  const store = new JobStore(tmpDir());
+  const scheduler = new Scheduler({
+    store, runner: fake.runner, fetchTitle: async () => '',
+    listVideos: async () => ({ kind: 'channel', title: 'Chan', url: 'https://www.youtube.com/@c/videos', videos: [{ videoId: 'BBBBBBBBBBB', title: 'B' }] }),
+  });
+  const old = await add(scheduler, 'AAAAAAAAAAA');
+  delete old.Space; // as saved before the split
+  const torah = await handleApi(scheduler, 'POST', '/api/jobs', { videoId: 'CCCCCCCCCCC', requestId: crypto.randomUUID() }, 'torah');
+  const general = await handleApi(scheduler, 'POST', '/api/jobs', { videoId: 'CCCCCCCCCCC', requestId: crypto.randomUUID() }, 'general');
+  assert.notStrictEqual(torah.Id, general.Id, 'the same video can be in both dashboards');
+  assert.strictEqual(general.Space, 'general');
+  const ids = async (space) => (await handleApi(scheduler, 'GET', '/api/status', null, space)).jobs.map((j) => j.Id).sort();
+  assert.deepStrictEqual(await ids('torah'), [old.Id, torah.Id].sort());
+  assert.deepStrictEqual(await ids('general'), [general.Id]);
+  assert.strictEqual((await ids(null)).length, 3, 'a client without X-Space still sees everything');
+  await handleApi(scheduler, 'POST', '/api/import', { url: 'https://www.youtube.com/@c', limit: 1 }, 'general');
+  assert.strictEqual((await handleApi(scheduler, 'GET', '/api/sources', null, 'general')).sources.length, 1);
+  assert.strictEqual((await handleApi(scheduler, 'GET', '/api/sources', null, 'torah')).sources.length, 0);
+  assert.strictEqual(store.jobs.find((j) => j.VideoId === 'BBBBBBBBBBB').Space, 'general');
+  await assert.rejects(handleApi(scheduler, 'GET', '/api/status', null, 'other'), /Unknown dashboard/);
+}
+
 module.exports = async function run() {
   await testLifecycle();
   await testFailuresAndRetries();
@@ -625,6 +651,7 @@ module.exports = async function run() {
   await testBrowserRecycling();
   await testParallel();
   await testProviderPool();
+  await testSpaces();
 };
 
 if (require.main === module) {

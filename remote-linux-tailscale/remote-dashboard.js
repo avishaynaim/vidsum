@@ -34,6 +34,8 @@ const HTML_REPLACEMENTS = [
 ];
 
 const SCRIPT_REPLACEMENTS = [
+  // Bookmarklets made on /torah or /general add their videos to that same dashboard.
+  ["  const base = location.origin + '/';", "  const base = location.origin + location.pathname;"],
   ["'Handing this video to the local controller...'", "'Handing this video to the server...'"],
   ["localResult.textContent = 'Open full transcript';", "localResult.textContent = 'Open summary';"],
   ["'Unable to open the full transcript: '", "'Unable to open the summary: '"],
@@ -96,7 +98,29 @@ function applyReplacements(text, replacements, name) {
 
 // Builds the page. `seedToken` (only for an already-authorized request) is stored where
 // app.js looks for it, so a login through the form or cookie works without a #token= link.
-function buildDashboard({ seedToken = null } = {}) {
+// The Torah / regular dashboards (server.js DASHBOARD_PATHS): same page, its own name, and every
+// request it makes says which dashboard it is for (X-Space), so the server shows and adds only
+// that dashboard's videos, channels and searches.
+const SPACE_NAMES = { torah: { label: 'Torah videos', icon: '📜' }, general: { label: 'Regular videos', icon: '🎓' } };
+
+function spaceScript(space) {
+  const other = space === 'torah' ? 'general' : 'torah';
+  const me = SPACE_NAMES[space];
+  return `<script>(()=>{const S=${JSON.stringify(space)},f=window.fetch.bind(window);` +
+    `window.fetch=(input,init={})=>{const u=new URL(typeof input==='string'?input:input.url,location.href);` +
+    `if(u.origin===location.origin&&u.pathname.startsWith('/api/')){const h=new Headers(init.headers||(typeof input==='string'?undefined:input.headers));h.set('X-Space',S);init={...init,headers:h}}` +
+    `return f(input,init)};` +
+    // Saved snapshots, drafts and filters are kept per dashboard; only the access key is shared.
+    `for(const m of ['getItem','setItem','removeItem']){const o=Storage.prototype[m];` +
+    `Storage.prototype[m]=function(k,...r){return o.call(this,k==='yt-summary-token'?k:S+':'+k,...r)}}` +
+    `document.title=${JSON.stringify(`${me.label} · YT Summary`)};` +
+    `document.addEventListener('DOMContentLoaded',()=>{const b=document.querySelector('.brand');if(!b)return;` +
+    `const t=b.querySelector('b');if(t)t.textContent=${JSON.stringify(`${me.icon} ${me.label}`)};` +
+    `const a=document.createElement('a');a.className='space-switch';a.href='/${other}';` +
+    `a.textContent=${JSON.stringify(`⇄ ${SPACE_NAMES[other].label}`)};b.append(a)});})();</script>\n`;
+}
+
+function buildDashboard({ seedToken = null, space = null } = {}) {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const script = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
   const page = applyReplacements(html, HTML_REPLACEMENTS, 'index.html');
@@ -111,8 +135,8 @@ function buildDashboard({ seedToken = null } = {}) {
   if (!page.text.includes(marker)) page.missing.push('index.html: app.js script tag');
   if (!page.text.includes('</head>')) page.missing.push('index.html: </head>');
   page.text = page.text.replace('</head>', '<link rel="stylesheet" href="/remote-responsive.css">\n</head>');
-  const text = page.text.replace(marker, `${seed}${marker}\n<script src="/remote-extras.js" defer></script>`);
+  const text = page.text.replace(marker, `${seed}${SPACE_NAMES[space] ? spaceScript(space) : ''}${marker}\n<script src="/remote-extras.js" defer></script>`);
   return { html: text, script: app.text, missing: [...page.missing, ...app.missing] };
 }
 
-module.exports = { buildDashboard, HTML_REPLACEMENTS, SCRIPT_REPLACEMENTS };
+module.exports = { buildDashboard, HTML_REPLACEMENTS, SCRIPT_REPLACEMENTS, SPACE_NAMES };

@@ -97,7 +97,7 @@ async function testDashboard() {
     assert.strictEqual(health.status, 200);
     assert.deepStrictEqual(await health.json(), { ok: true });
 
-    const dashboard = await fetch(`http://127.0.0.1:${port}/?token=bundle-test-token`);
+    const dashboard = await fetch(`http://127.0.0.1:${port}/torah?token=bundle-test-token`);
     assert.strictEqual(dashboard.status, 200);
     assert.match(await dashboard.text(), /<span>remote server<\/span>/);
     const cookie = dashboard.headers.get('set-cookie');

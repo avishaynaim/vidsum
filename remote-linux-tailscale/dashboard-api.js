@@ -198,6 +198,14 @@ class JobStore {
   }
 }
 
+// Two separate dashboards share one queue and browser: 'torah' (Torah lessons) and 'general'
+// (other studies). Every job, saved channel/playlist and saved search belongs to one of them;
+// anything from before the split has no Space and counts as 'torah'.
+const SPACES = ['torah', 'general'];
+const spaceOf = (item) => (item && (item.Space || item.space)) || 'torah';
+// space === null (a client that does not say) sees everything, as before the split.
+const inSpace = (space) => (item) => !space || spaceOf(item) === space;
+
 function newJob({ videoId, requestId, title, summaryLevel, watchLater }) {
   const at = now();
   return {
@@ -346,8 +354,8 @@ class Scheduler {
     this.pump();
   }
 
-  status() {
-    const jobs = this.store.jobs;
+  status(space = null) {
+    const jobs = this.store.jobs.filter(inSpace(space));
     return {
       app: 'YT Summary', ready: this.ready, stopping: false, browserMessage: this.browserMessage,
       summaryLevel: this.settings.summaryLevel, summaryLanguage: 'hebrew',
@@ -370,7 +378,7 @@ class Scheduler {
     return job;
   }
 
-  enqueue(body) {
+  enqueue(body, space = null) {
     const { videoId, requestId } = body;
     const hasLevel = body.summaryLevel !== undefined;
     if (typeof videoId !== 'string' || !VIDEO_ID.test(videoId) || typeof requestId !== 'string' || !GUID.test(requestId) ||
@@ -388,7 +396,7 @@ class Scheduler {
       if (!byRequest.Title && title) { byRequest.Title = title; this.store.save(byRequest); }
       return byRequest;
     }
-    const existing = [...this.store.jobs].reverse().find((j) => j.VideoId === videoId && j.SummaryLevel === level);
+    const existing = [...this.store.jobs].reverse().find((j) => j.VideoId === videoId && j.SummaryLevel === level && inSpace(space)(j));
     if (existing) {
       if (!existing.Title && title) existing.Title = title;
       if (existing.State === 'completed' && existing.FinalResult === 'local') this.store.touch(existing);
@@ -399,6 +407,7 @@ class Scheduler {
       throw new ApiError(429, 'The queue is full (200 unfinished videos). Wait or review pending sends.');
     }
     const job = newJob({ videoId, requestId, title, summaryLevel: level, watchLater: body.watchLater });
+    job.Space = space || 'torah';
     this.store.add(job);
     if (this.pauseKind === 'restart') this.clearHold(); // adding a video is an explicit request to work
     // Keep only the most recent finished history.
@@ -415,7 +424,7 @@ class Scheduler {
 
   // "Add a playlist or channel": every video becomes its own job. A video that already has a
   // job at this summary level is not processed again (enqueue returns the existing job).
-  async importList(body) {
+  async importList(body, space = null) {
     const level = body.summaryLevel === undefined ? this.settings.summaryLevel : body.summaryLevel;
     if (!LEVELS.includes(level)) throw new ApiError(400, 'Unknown summary level.');
     if (typeof body.url !== 'string' || !body.url.trim()) throw new ApiError(400, 'Paste a YouTube playlist or channel link.');
@@ -430,7 +439,7 @@ class Scheduler {
     // Each job remembers where it came from; shown on its tile and searchable.
     const source = { SourceKind: listed.kind, SourceTitle: listed.title || listed.url || body.url, SourceUrl: listed.url || body.url };
     for (const video of listed.videos) {
-      const existing = this.store.jobs.find((j) => j.VideoId === video.videoId && j.SummaryLevel === level);
+      const existing = this.store.jobs.find((j) => j.VideoId === video.videoId && j.SummaryLevel === level && inSpace(space)(j));
       if (existing) {
         if (existing.State === 'completed') result.alreadyDone++; else result.alreadyListed++;
         if (!existing.SourceTitle) { Object.assign(existing, source); this.store.save(existing); result.labeled = (result.labeled || 0) + 1; }
@@ -438,7 +447,7 @@ class Scheduler {
       }
       if (body.labelOnly) continue; // only label videos that already have a job
       try {
-        const job = this.enqueue({ videoId: video.videoId, requestId: crypto.randomUUID(), title: video.title, summaryLevel: level });
+        const job = this.enqueue({ videoId: video.videoId, requestId: crypto.randomUUID(), title: video.title, summaryLevel: level }, space);
         if (video.durationSeconds && !job.DurationSeconds) job.DurationSeconds = video.durationSeconds;
         Object.assign(job, source);
         this.store.save(job);
@@ -452,18 +461,18 @@ class Scheduler {
     if (!body.labelOnly) {
       result.source = this.rememberSource({
         url: listed.url || body.url, kind: listed.kind, title: listed.title, limit, summaryLevel: level, result,
-        seenIds: listed.videos.map((v) => v.videoId),
+        seenIds: listed.videos.map((v) => v.videoId), space,
       });
     }
     return result;
   }
 
   // Every successful import is remembered (one entry per link; importing it again updates it).
-  rememberSource({ url, kind, title, limit, summaryLevel, result, seenIds = [] }) {
+  rememberSource({ url, kind, title, limit, summaryLevel, result, seenIds = [], space = null }) {
     const sources = this.store.loadSources();
-    let source = sources.find((s) => s.url === url);
+    let source = sources.find((s) => s.url === url && inSpace(space)(s));
     if (!source) {
-      source = { id: crypto.randomUUID(), url, kind, createdAt: now() };
+      source = { id: crypto.randomUUID(), url, kind, createdAt: now(), space: space || 'torah' };
       sources.push(source);
     }
     Object.assign(source, {
@@ -482,7 +491,7 @@ class Scheduler {
   // was already seen or already has a job; a playlist's are the entries not seen before.
   async peekSource(id) {
     const source = this.findSource(id);
-    const hasJob = (videoId) => this.store.jobs.some((j) => j.VideoId === videoId && j.SummaryLevel === source.summaryLevel);
+    const hasJob = (videoId) => this.store.jobs.some((j) => j.VideoId === videoId && j.SummaryLevel === source.summaryLevel && spaceOf(j) === spaceOf(source));
     const seen = new Set(source.seenIds || []);
     let pending;
     try {
@@ -504,12 +513,12 @@ class Scheduler {
     return { id, ...pending };
   }
 
-  async peekAllSources() {
+  async peekAllSources(space = null) {
     if (this.peeking) return { results: [], busy: true };
     this.peeking = true;
     try {
       const results = [];
-      for (const source of this.store.loadSources()) results.push(await this.peekSource(source.id).catch((err) => ({ id: source.id, error: err.message })));
+      for (const source of this.store.loadSources().filter(inSpace(space))) results.push(await this.peekSource(source.id).catch((err) => ({ id: source.id, error: err.message })));
       return { results };
     } finally {
       this.peeking = false;
@@ -528,7 +537,7 @@ class Scheduler {
     const source = this.findSource(id);
     // Never leave a known new video behind: take at least as many as are waiting.
     const limit = Math.max(source.limit || 1, (source.pending && source.pending.count) || 0);
-    return this.importList({ url: source.url, limit, summaryLevel: source.summaryLevel, labelOnly }).then((result) => {
+    return this.importList({ url: source.url, limit, summaryLevel: source.summaryLevel, labelOnly }, spaceOf(source)).then((result) => {
       if (limit !== (source.limit || 1)) {
         // Keep the user's own "latest N" setting; the larger count was only for this run.
         const sources = this.store.loadSources();
@@ -539,9 +548,9 @@ class Scheduler {
     });
   }
 
-  async runAllSources() {
+  async runAllSources(space = null) {
     const results = [];
-    for (const source of this.store.loadSources()) {
+    for (const source of this.store.loadSources().filter(inSpace(space))) {
       try { results.push({ id: source.id, ...(await this.runSource(source.id)) }); }
       catch (err) { results.push({ id: source.id, title: source.title, error: err.message }); }
     }
@@ -716,8 +725,8 @@ class Scheduler {
   }
 
   // Every failed video from any day (the dashboard's own button only covers today's).
-  retryAllFailed() {
-    const failed = this.store.jobs.filter((j) => j.State === 'error' && !j.WatchLater);
+  retryAllFailed(space = null) {
+    const failed = this.store.jobs.filter((j) => j.State === 'error' && !j.WatchLater && inSpace(space)(j));
     for (const job of failed) {
       Object.assign(job, {
         State: 'queued', RetryReason: '', PausedByUser: false, AutoRetryAttempts: 0, AutoRetryAfterUtc: null,
@@ -828,12 +837,12 @@ class Scheduler {
     return doomed.length;
   }
 
-  clearDuplicates() {
+  clearDuplicates(space = null) {
     const rank = (j) => (j.State === 'completed' && (j.ResultUrl || j.FinalResult === 'local') ? 5
       : j.State === 'completed' ? 4 : j.State === 'submitted' ? 3 : ['error', 'needs-review'].includes(j.State) ? 2
         : j.State === 'reviewed' ? 1 : 0);
     const groups = new Map();
-    for (const job of this.store.jobs.filter(isTerminal)) {
+    for (const job of this.store.jobs.filter((j) => isTerminal(j) && inSpace(space)(j))) {
       const key = `${job.VideoId}\n${job.SummaryLevel || 'legacy'}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(job);
@@ -908,8 +917,9 @@ class Scheduler {
   // ---- Search in summaries ----
 
   // Videos that have summary text to search (finished, or with finished parts).
-  searchableVideos() {
+  searchableVideos(space = null) {
     return [...this.store.jobs].reverse()
+      .filter(inSpace(space))
       .filter((job) => job.FinalResult === 'local' || this.store.getParts(job).length)
       .map((job) => ({
         id: job.Id, videoId: job.VideoId, title: job.Title, level: job.SummaryLevel, state: job.State,
@@ -918,7 +928,7 @@ class Scheduler {
   }
 
   // body: { query, exclude?: ["not" phrases], jobIds?: [...] (default: every searchable video), contextWords? }
-  search(body) {
+  search(body, space = null) {
     const { searchSections, normalizeQuery, DEFAULT_CONTEXT_WORDS } = require('./search');
     const query = typeof body.query === 'string' ? body.query : '';
     if (normalizeQuery(query).length < 2) throw new ApiError(400, 'Type at least 2 letters to search.');
@@ -926,7 +936,7 @@ class Scheduler {
     const wanted = Array.isArray(body.jobIds) ? new Set(body.jobIds) : null;
     const exclude = (Array.isArray(body.exclude) ? body.exclude : [])
       .filter((x) => typeof x === 'string' && normalizeQuery(x)).slice(0, 20);
-    const videos = this.searchableVideos().filter((v) => !wanted || wanted.has(v.id));
+    const videos = this.searchableVideos(space).filter((v) => !wanted || wanted.has(v.id));
     const results = [];
     let matches = 0;
     for (const video of videos) {
@@ -948,8 +958,8 @@ class Scheduler {
 
   // body: the search's own fields (query, exclude, contextWords, jobIds?) + name, and id to
   // update an existing saved search. The search runs now and its results are stored with it.
-  saveSearchEntry(body) {
-    const results = this.search(body);
+  saveSearchEntry(body, space = null) {
+    const results = this.search(body, space);
     const name = typeof body.name === 'string' && body.name.trim()
       ? body.name.trim().slice(0, 120)
       : [results.query, ...results.exclude.map((x) => `not "${x}"`)].join(', ');
@@ -961,7 +971,7 @@ class Scheduler {
       createdAt = previous.createdAt || createdAt;
     }
     const entry = {
-      id, name, createdAt, savedAt: now(),
+      id, name, createdAt, savedAt: now(), space: space || 'torah',
       query: results.query, exclude: results.exclude, contextWords: results.contextWords,
       jobIds: Array.isArray(body.jobIds) ? body.jobIds.filter((x) => typeof x === 'string') : null,
       searched: results.searched, matches: results.matches, videos: results.results.length, results,
@@ -1011,20 +1021,24 @@ class Scheduler {
 }
 
 // Routes one /api/* request. `body` is the parsed JSON object (POST) or null (GET).
-async function handleApi(scheduler, method, pathname, body) {
-  if (method === 'GET' && pathname === '/api/status') return scheduler.status();
-  if (method === 'GET' && pathname === '/api/search/videos') return { videos: scheduler.searchableVideos() };
-  if (method === 'GET' && pathname === '/api/searches') return { searches: scheduler.store.listSearches() };
-  if (method === 'GET' && pathname === '/api/sources') return { sources: scheduler.store.loadSources() };
+// `space` ('torah' / 'general', from the dashboard's X-Space header) limits lists and bulk
+// actions to that dashboard and tags what it adds; null keeps the old all-in-one behavior.
+async function handleApi(scheduler, method, pathname, body, space = null) {
+  if (space !== null && !SPACES.includes(space)) throw new ApiError(400, 'Unknown dashboard.');
+  const mine = inSpace(space);
+  if (method === 'GET' && pathname === '/api/status') return scheduler.status(space);
+  if (method === 'GET' && pathname === '/api/search/videos') return { videos: scheduler.searchableVideos(space) };
+  if (method === 'GET' && pathname === '/api/searches') return { searches: scheduler.store.listSearches().filter(mine) };
+  if (method === 'GET' && pathname === '/api/sources') return { sources: scheduler.store.loadSources().filter(mine) };
   if (method !== 'POST') throw new ApiError(404, 'Unknown endpoint.');
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ApiError(400, 'A JSON object is required.');
   switch (pathname) {
-    case '/api/jobs': return scheduler.enqueue(body);
+    case '/api/jobs': return scheduler.enqueue(body, space);
     case '/api/settings': return scheduler.saveSettings(body);
     case '/api/resume': scheduler.resume(); return { paused: false, pauseReason: '' };
     case '/api/stop': scheduler.stopAll(); return { stopping: true };
     case '/api/retry': return scheduler.retry(body.jobId);
-    case '/api/retry-failed': return scheduler.retryAllFailed();
+    case '/api/retry-failed': return scheduler.retryAllFailed(space);
     case '/api/clear': scheduler.clearProgress(body.jobId); return { cleared: true };
     case '/api/start-job': return scheduler.startNow(body.jobId);
     case '/api/stop-job': scheduler.stopJob(body.jobId); return { stopping: true };
@@ -1034,9 +1048,9 @@ async function handleApi(scheduler, method, pathname, body) {
     case '/api/set-job-level': scheduler.setLevel(body.jobId, body.summaryLevel); return { updated: true };
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
     case '/api/details': return scheduler.details(body.jobId);
-    case '/api/import': return scheduler.importList(body);
-    case '/api/search': return scheduler.search(body);
-    case '/api/searches/save': return scheduler.saveSearchEntry(body);
+    case '/api/import': return scheduler.importList(body, space);
+    case '/api/search': return scheduler.search(body, space);
+    case '/api/searches/save': return scheduler.saveSearchEntry(body, space);
     case '/api/searches/get': return scheduler.store.getSearch(body.id);
     case '/api/searches/delete': scheduler.store.deleteSearch(body.id); return { deleted: true };
     case '/api/browser/restart':
@@ -1045,17 +1059,17 @@ async function handleApi(scheduler, method, pathname, body) {
       await scheduler.restartBrowser('requested from the dashboard');
       return { restarted: true };
     case '/api/sources/run': return scheduler.runSource(body.id, { labelOnly: body.labelOnly === true });
-    case '/api/sources/run-all': return scheduler.runAllSources();
-    case '/api/sources/peek': return body.id ? scheduler.peekSource(body.id) : scheduler.peekAllSources();
+    case '/api/sources/run-all': return scheduler.runAllSources(space);
+    case '/api/sources/peek': return body.id ? scheduler.peekSource(body.id) : scheduler.peekAllSources(space);
     case '/api/sources/update': return scheduler.updateSource(body);
     case '/api/sources/delete': scheduler.deleteSource(body.id); return { deleted: true };
     case '/api/result': return { finalResult: scheduler.store.getResult(scheduler.find(body.jobId)) };
-    case '/api/clear-errors': return { cleared: scheduler.clearWhere((j) => j.State === 'error') };
-    case '/api/clear-cancelled': return { cleared: scheduler.clearWhere((j) => ['cancelled', 'reviewed'].includes(j.State)) };
-    case '/api/clear-duplicates': return { cleared: scheduler.clearDuplicates() };
+    case '/api/clear-errors': return { cleared: scheduler.clearWhere((j) => j.State === 'error' && mine(j)) };
+    case '/api/clear-cancelled': return { cleared: scheduler.clearWhere((j) => ['cancelled', 'reviewed'].includes(j.State) && mine(j)) };
+    case '/api/clear-duplicates': return { cleared: scheduler.clearDuplicates(space) };
     case '/api/acknowledge': throw new ApiError(409, 'This video has no pending send to review.');
     default: throw new ApiError(404, 'Unknown endpoint.');
   }
 }
 
-module.exports = { JobStore, Scheduler, handleApi, applyStatus, ApiError, AUTO_RETRY_LIMIT };
+module.exports = { JobStore, Scheduler, handleApi, applyStatus, ApiError, AUTO_RETRY_LIMIT, SPACES };

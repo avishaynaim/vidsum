@@ -230,6 +230,30 @@ function sendPage(res, content, type = 'text/html; charset=utf-8', extraHeaders 
   res.end(payload);
 }
 
+// The two dashboards (see SPACES in dashboard-api.js), each at /<space>.
+const DASHBOARD_PATHS = ['/torah', '/general'];
+
+// '/': choose a dashboard. A #videos=/#video= link from an old bookmark is passed on to the
+// chosen one, so nothing it carried is lost.
+const CHOOSER_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>YT Summary</title>
+<style>body{font:16px system-ui,sans-serif;max-width:520px;margin:auto;padding:24px 16px;background:#0b111a;color:#e8eef7}
+h1{font-size:22px;color:#7dd3fc;margin:0 0 18px}a{display:block;text-decoration:none;color:inherit;background:#111823;border:1px solid #233044;
+border-radius:16px;padding:22px 20px;margin:14px 0}a:hover{border-color:#7dd3fc}b{display:block;font-size:21px;margin-bottom:4px}
+span{color:#93a4b8;font-size:14px}.n{color:#5eead4;font-weight:700}</style></head>
+<body><h1>YT Summary</h1>
+<a href="/torah" data-space="torah"><b>📜 Torah videos</b><span>Shiurim and Torah lessons · <span class="n"></span></span></a>
+<a href="/general" data-space="general"><b>🎓 Regular videos</b><span>Other studies and everything else · <span class="n"></span></span></a>
+<script>
+for (const a of document.querySelectorAll('a[data-space]')) {
+  a.href += location.hash;
+  fetch('/api/status', { headers: { 'X-Space': a.dataset.space } }).then((r) => r.json()).then((s) => {
+    const done = s.jobs.filter((j) => j.State === 'completed').length;
+    a.querySelector('.n').textContent = s.jobs.length + ' videos · ' + s.active + ' running · ' + s.queued + ' queued · ' + done + ' done';
+  }).catch(() => {});
+}
+</script></body></html>`;
+
 // Shown instead of a JSON 401 when a browser opens the dashboard without a valid key, so a
 // cut-off or missing ?token= link still lets the user paste the key and get in.
 function sendLogin(res, failed) {
@@ -398,7 +422,7 @@ function createServer({
       }
 
       const denied = checkAccess(req, url, token);
-      if (denied && denied.status === 401 && ['/', '/simple'].includes(url.pathname) && req.method === 'GET') {
+      if (denied && denied.status === 401 && ['/', '/simple', ...DASHBOARD_PATHS].includes(url.pathname) && req.method === 'GET') {
         sendLogin(res, url.searchParams.has('token'));
         return;
       }
@@ -407,14 +431,15 @@ function createServer({
         return;
       }
 
-      if ((url.pathname === '/' || url.pathname === '/simple') && req.method === 'GET') {
+      if ((url.pathname === '/' || url.pathname === '/simple' || DASHBOARD_PATHS.includes(url.pathname)) && req.method === 'GET') {
         // Opening a page once with ?token= remembers it in an HttpOnly cookie, so the sign-in
         // screen (plain links/WebSockets, no custom headers) is authorized too.
         const supplied = url.searchParams.get('token');
         const headers = supplied && token ? { 'Set-Cookie': sessionCookie(supplied) } : {};
-        const page = url.pathname === '/'
-          ? buildDashboard({ seedToken: dashboardToken(token) }).html
-          : fs.readFileSync(path.join(__dirname, 'simple.html'));
+        // '/' picks one of the two dashboards (Torah / regular videos); each lives at its own path.
+        const page = url.pathname === '/' ? CHOOSER_PAGE
+          : url.pathname === '/simple' ? fs.readFileSync(path.join(__dirname, 'simple.html'))
+            : buildDashboard({ seedToken: dashboardToken(token), space: url.pathname.slice(1) }).html;
         sendPage(res, page, 'text/html; charset=utf-8', headers);
         return;
       }
@@ -427,7 +452,7 @@ function createServer({
           try { body = JSON.parse((await readBody(req)) || '{}'); } catch { sendJson(res, 400, { error: 'Invalid JSON.' }); return; }
         }
         try {
-          sendJson(res, 200, await handleApi(scheduler, req.method, url.pathname, body));
+          sendJson(res, 200, await handleApi(scheduler, req.method, url.pathname, body, req.headers['x-space'] || null));
         } catch (err) {
           sendJson(res, err.status || 500, { error: err.message });
         }
