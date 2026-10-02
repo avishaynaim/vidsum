@@ -246,28 +246,50 @@ function transcribeAudio(videoId, bin) {
 
 /**
  * Fetches the transcript text and best-effort title for a public YouTube video: captions via
- * yt-dlp (else the direct watch-page method below), and for a video with no captions at all,
- * a transcription of its audio. A YouTube block is thrown with `rateLimited: true`.
+ * yt-dlp (else the direct watch-page method below); for a video with no captions at all, a
+ * NotebookLM transcription of its audio, then (options.whisper) local Whisper as a last resort.
+ * Errors carry `rateLimited` (YouTube block: retry much later), `noCaptions` (confirmed: no
+ * captions exist, so a retry can skip that check: options.noCaptionsConfirmed) and
+ * `whisperBusy` (Whisper is busy with another video: wait in the queue, not a failure).
  */
-async function fetchTranscript(videoId, { onStatus = () => {} } = {}) {
+async function fetchTranscript(videoId, { onStatus = () => {}, whisper = false, noCaptionsConfirmed = false } = {}) {
   assertValidVideoId(videoId);
-  let captionError;
-  try {
-    return await paced(() => fetchCaptions(videoId));
-  } catch (err) {
-    captionError = err;
+  if (!noCaptionsConfirmed) {
+    let captionError;
+    try {
+      return await paced(() => fetchCaptions(videoId));
+    } catch (err) {
+      captionError = err;
+    }
+    if (RATE_LIMITED.test(captionError.message)) {
+      throw Object.assign(new Error(`YouTube is rate-limiting this server right now (${captionError.message})`), { rateLimited: true });
+    }
+    if (!NO_CAPTIONS.test(captionError.message)) throw captionError;
   }
-  if (RATE_LIMITED.test(captionError.message)) {
-    throw Object.assign(new Error(`YouTube is rate-limiting this server right now (${captionError.message})`), { rateLimited: true });
+  const noCaptions = (err, extra = {}) => Object.assign(err, { noCaptions: true }, extra);
+  const failures = [];
+  const bin = findYtTranscript();
+  if (bin) {
+    onStatus('This video has no captions on YouTube; transcribing its audio instead (takes a few minutes)...');
+    try {
+      return await transcribeAudio(videoId, bin);
+    } catch (err) {
+      failures.push(err.message);
+      if (!whisper && RATE_LIMITED.test(err.message)) {
+        throw noCaptions(new Error(`This video has no captions on YouTube, and ${err.message}`), { rateLimited: true });
+      }
+    }
   }
-  const bin = NO_CAPTIONS.test(captionError.message) ? findYtTranscript() : null;
-  if (!bin) throw captionError;
-  onStatus('This video has no captions on YouTube; transcribing its audio instead (takes a few minutes)...');
-  try {
-    return await transcribeAudio(videoId, bin);
-  } catch (err) {
-    throw Object.assign(new Error(`This video has no captions on YouTube, and ${err.message}`), { rateLimited: RATE_LIMITED.test(err.message) });
+  if (whisper) {
+    const { transcribeWithWhisper } = require('./whisper');
+    try {
+      return await transcribeWithWhisper(videoId, { onStatus, findYtDlp });
+    } catch (err) {
+      if (err.whisperBusy) throw noCaptions(err);
+      failures.push(`local Whisper failed: ${err.message}`);
+    }
   }
+  throw noCaptions(new Error(`This video has no captions on YouTube${failures.length ? `, and ${failures.join('; ')}` : ''}.`));
 }
 
 async function fetchCaptions(videoId) {

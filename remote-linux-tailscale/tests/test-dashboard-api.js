@@ -634,6 +634,35 @@ async function testRateLimitWait() {
   void store;
 }
 
+// Whisper busy with another video: back in the queue to wait, no retry charged; a confirmed
+// "no captions" is remembered on the job and passed to the next run.
+async function testWhisperBusy() {
+  const calls = [];
+  let mode = 'busy';
+  const runner = async (args) => {
+    calls.push(args);
+    if (mode === 'busy') {
+      args.onNoCaptions();
+      throw Object.assign(new Error('busy'), { whisperBusy: true, noCaptions: true });
+    }
+    return { text: 'x', provider: 'Claude' };
+  };
+  const { scheduler } = makeScheduler(tmpDir(), runner);
+  const job = await add(scheduler, 'WWWWWWWWWWW');
+  await tick(); await tick();
+  assert.strictEqual(job.State, 'queued');
+  assert.strictEqual(job.AutoRetryAttempts, 0, 'waiting for Whisper is not a failed attempt');
+  assert.ok(Date.parse(job.WaitUntilUtc) > Date.now(), 'waits before trying again');
+  assert.strictEqual(job.NoTranscriptConfirmed, true);
+  assert.strictEqual(calls[0].whisperFallback, true, 'on by default');
+  mode = 'ok';
+  await handleApi(scheduler, 'POST', '/api/start-job', { jobId: job.Id });
+  await tick(); await tick();
+  assert.strictEqual(calls[1].noCaptionsConfirmed, true, 'the retry skips the caption check');
+  await handleApi(scheduler, 'POST', '/api/settings', { whisperFallback: false });
+  assert.strictEqual((await handleApi(scheduler, 'GET', '/api/status', null)).whisperFallback, false);
+}
+
 // Torah / regular dashboards: one queue, but each sees and acts on only its own videos,
 // channels and searches; jobs from before the split belong to the Torah one.
 async function testSpaces() {
@@ -675,6 +704,7 @@ module.exports = async function run() {
   await testProviderPool();
   await testSpaces();
   await testRateLimitWait();
+  await testWhisperBusy();
 };
 
 if (require.main === module) {

@@ -26,6 +26,7 @@ const AUTO_RETRY_DELAY_MS = 2 * 60 * 1000;
 // A YouTube rate limit on transcript downloads (transcript.js) gets more, longer-spaced retries.
 const RATE_LIMIT_RETRIES = 6;
 const RATE_LIMIT_DELAY_MS = 20 * 60 * 1000;
+const WHISPER_BUSY_WAIT_MS = 5 * 60 * 1000;
 const MAX_UNFINISHED = 200;
 // Finished jobs kept (the Windows helper keeps 100). Higher here: on the server the summary
 // text lives with the job, and one channel import can add 50 at once.
@@ -366,6 +367,7 @@ class Scheduler {
       paused: this.paused, pauseReason: this.pauseReason, pauseKind: this.pauseKind,
       autoRetryLimit: AUTO_RETRY_LIMIT, pausedWorkers: jobs.filter((j) => j.State === 'paused').length,
       maxConcurrent: this.maxConcurrent, startIntervalMilliseconds: 0, mobileOrigin: '',
+      whisperFallback: this.settings.whisperFallback !== false, whisperMissing: require('./whisper').whisperMissing(),
       providerOrder: PROVIDERS,
       active: jobs.filter((j) => !isTerminal(j) && j.State !== 'queued').length,
       queued: jobs.filter((j) => j.State === 'queued').length,
@@ -614,6 +616,10 @@ class Scheduler {
         videoId: job.VideoId, level: job.SummaryLevel, clear, signal: controller.signal,
         out: process.env.YT_SUMMARY_OUT || process.cwd(), maxMessageChars: 22000,
         providers: this.settings.enabledProviders,
+        whisperFallback: this.settings.whisperFallback !== false,
+        noCaptionsConfirmed: !!job.NoTranscriptConfirmed,
+        // Remembered so a retry does not ask YouTube again for captions it confirmed are missing.
+        onNoCaptions: () => { job.NoTranscriptConfirmed = true; this.store.save(job); },
         onPart: (part) => {
           this.store.savePart(job, part);
           job.PartResultUrls = this.store.getParts(job).map((p) => p.url).filter(Boolean);
@@ -661,7 +667,14 @@ class Scheduler {
           ? 'The server browser stopped responding. It is being restarted; this video retries automatically.'
           : err.message;
         job.RetryReason = err.message;
-        if (err.rateLimited && (job.RateLimitAttempts || 0) < RATE_LIMIT_RETRIES) {
+        if (err.whisperBusy) {
+          // Only one Whisper transcription at a time (it is very slow here). Waiting in place would
+          // hold a video slot for hours, so the video goes back in line and is not charged a retry.
+          job.State = 'queued';
+          job.WaitUntilUtc = new Date(Date.now() + WHISPER_BUSY_WAIT_MS).toISOString();
+          job.Message = 'Waiting: this video has no captions and needs the local speech-to-text engine (Whisper), ' +
+            'which is busy with another video. It tries again every few minutes.';
+        } else if (err.rateLimited && (job.RateLimitAttempts || 0) < RATE_LIMIT_RETRIES) {
           // YouTube's block on this IP outlasts the normal 2-minute retry, and it is not the
           // video's fault: it goes back in the queue, waiting 20 min, then 40, 80... (pump skips
           // it until WaitUntilUtc). Start now / Retry skip the wait.
@@ -1018,6 +1031,11 @@ class Scheduler {
       next.keepIntermediateTabs = body.keepIntermediateTabs;
       valid = true;
     }
+    if (body.whisperFallback !== undefined) {
+      if (typeof body.whisperFallback !== 'boolean') throw new ApiError(400, 'whisperFallback must be true or false.');
+      next.whisperFallback = body.whisperFallback;
+      valid = true;
+    }
     if (body.summaryLanguage !== undefined) valid = true; // always Hebrew, as on Windows
     if (body.maxConcurrent !== undefined) {
       const n = Number(body.maxConcurrent);
@@ -1032,6 +1050,7 @@ class Scheduler {
     return {
       summaryLevel: next.summaryLevel, enabledProviders: next.enabledProviders,
       summaryLanguage: 'hebrew', keepIntermediateTabs: next.keepIntermediateTabs, maxConcurrent: this.maxConcurrent,
+      whisperFallback: next.whisperFallback !== false,
     };
   }
 }

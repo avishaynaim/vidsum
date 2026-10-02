@@ -135,13 +135,16 @@ async function runVideo(args, onStatus) {
     onStatus('Fetching transcript...');
     let fetched;
     try {
-      fetched = await transcriptMod.fetchTranscript(args.videoId, { onStatus });
+      fetched = await transcriptMod.fetchTranscript(args.videoId,
+        { onStatus, whisper: !!args.whisperFallback, noCaptionsConfirmed: !!args.noCaptionsConfirmed });
     } catch (err) {
+      if (err.whisperBusy) throw err; // not a failure: the dashboard puts the video back in line
+      if (err.noCaptions && args.onNoCaptions) args.onNoCaptions();
       // YouTube sometimes answers without captions or not at all (busy, rate limits, a busy
       // host); it often works minutes later, so this stop is retryable like a provider one.
       // A rate limit (rateLimited) lasts much longer, so it is retried on a longer schedule.
       throw Object.assign(new Error(`Could not get the transcript from YouTube: ${err.message} Nothing was sent to a provider.`),
-        { retryable: true, rateLimited: !!err.rateLimited });
+        { retryable: true, rateLimited: !!err.rateLimited, noCaptions: !!err.noCaptions });
     }
     transcriptText = fetched.text;
     title = fetched.title;

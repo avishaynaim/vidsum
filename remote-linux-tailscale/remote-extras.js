@@ -38,6 +38,19 @@
     catch (error) { alert(`Could not save: ${error.message}`); }
     finally { parallel.disabled = false; }
   });
+  // Local Whisper: last resort for videos with no captions at all (whisper.js).
+  const whisperBox = el('input', { type: 'checkbox', id: 'whisper-fallback' });
+  const whisperNote = el('p', { className: 'muted' });
+  whisperBox.addEventListener('change', async () => {
+    whisperBox.disabled = true;
+    try { await post('/api/settings', { whisperFallback: whisperBox.checked }); }
+    catch (error) { alert(`Could not save: ${error.message}`); whisperBox.checked = !whisperBox.checked; }
+    finally { whisperBox.disabled = false; }
+  });
+  const whisperBlock = el('div', {},
+    el('div', { className: 'panel-title', style: 'margin-top:12px' }, 'Videos with no captions'),
+    el('label', { className: 'row', style: 'gap:8px;align-items:center' }, whisperBox, 'Local speech-to-text fallback (Whisper)'),
+    whisperNote);
   const parallelBlock = el('div', {},
     el('div', { className: 'panel-title', style: 'margin-top:12px' }, 'Videos at the same time'), parallel,
     el('p', { className: 'muted' }, 'Up to 3 videos run together, each on a different AI site (about 3× faster). Extra videos only start while the server has at least 1.5 GB of memory free.'));
@@ -52,7 +65,7 @@
     el('div', { className: 'panel-title', style: 'margin-top:12px' }, 'Internet address'),
     el('p', {}, 'Public IP: ', ipValue), ipState, rotate,
     el('p', { className: 'muted' }, 'Reconnects the home router for a new public IP. The server (and this page) is offline for about 1–2 minutes, then reconnects by itself. Not allowed while a video is running.'));
-  panel.append(el('div', { className: 'panel-title' }, 'Remote server'), signInBlock, parallelBlock, ipBlock);
+  panel.append(el('div', { className: 'panel-title' }, 'Remote server'), signInBlock, parallelBlock, whisperBlock, ipBlock);
 
   function mount() {
     const status = document.querySelector('.col .panel');
@@ -784,6 +797,11 @@
   api('/api/status').then((status) => {
     if (LEVEL_NAMES[status.summaryLevel]) importLevel.value = status.summaryLevel;
     if (status.maxConcurrent) parallel.value = String(status.maxConcurrent);
+    whisperBox.checked = status.whisperFallback !== false;
+    whisperNote.textContent = status.whisperMissing
+      ? `Not set up on the server (missing ${status.whisperMissing}); videos with no captions fail as before.`
+      : 'A video with no captions is first transcribed through NotebookLM (minutes). Only if that fails, Whisper ' +
+        'transcribes it on this server: one video at a time and very slowly here (several times the video length).';
   }).catch(() => {});
   api('/config').then((config) => {
     signInBlock.hidden = !config.signIn;
