@@ -201,12 +201,12 @@ async function runVideo(args, onStatus) {
 
   const outDir = args.out || process.env.YT_SUMMARY_OUT || process.cwd();
   fs.mkdirSync(outDir, { recursive: true });
-  const outFile = path.join(outDir, `${args.videoId}.summary.txt`);
+  const outFile = path.join(outDir, `${args.videoId}.${args.level || 'legacy'}.summary.txt`); // one file per level
   fs.writeFileSync(outFile, ckpt.finalResult.text, 'utf8');
   onStatus(`Final summary (via ${ckpt.finalResult.provider}) written to ${outFile}`);
 
-  // The transcript no longer needs to be retained privately once the video is complete.
-  checkpointMod.clearTranscriptCache(args.videoId);
+  // The transcript is kept (it used to be deleted here): "Summarize again at another level"
+  // then starts at once, without asking YouTube again.
 
   // parts: only for a chunked video (a single-stage video's one part IS the final summary).
   return {

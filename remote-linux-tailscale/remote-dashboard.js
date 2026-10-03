@@ -80,6 +80,33 @@ const SCRIPT_REPLACEMENTS = [
     "          const avatar = document.createElement('img'); avatar.className = 'job-avatar'; avatar.loading = 'lazy'; avatar.alt = ''; avatar.onerror = () => { avatar.hidden = true; };\n" +
     "          avatar.src = `/thumb/channel?video=${encodeURIComponent(job.VideoId)}&token=${encodeURIComponent(token || '')}`;\n" +
     "          pics.append(thumb, avatar); element.prepend(pics); }"],
+  // A finished video: the level menu that REPLACED its summary is hidden; instead "Summarize
+  // again at" makes a new job at another level and keeps both (dashboard-api resummarize).
+  ["      row.levelSelect.hidden = job.State !== 'queued' && meta.section !== 'history';",
+    "      row.levelSelect.hidden = (job.State !== 'queued' && meta.section !== 'history') || job.State === 'completed';\n" +
+    "      if (!row.again) {\n" +
+    "        const pick = document.createElement('select'); pick.className = 'job-level-select';\n" +
+    "        const go = document.createElement('button'); go.textContent = 'Summarize again at this level';\n" +
+    "        row.again = document.createElement('span'); row.again.className = 'again-level';\n" +
+    "        row.again.append(pick, go); row.levelSelect.after(row.again);\n" +
+    "        go.addEventListener('click', async () => {\n" +
+    "          go.disabled = true;\n" +
+    "          try {\n" +
+    "            const made = await request('/api/resummarize', 'POST', { jobId: row.againJobId, summaryLevel: pick.value });\n" +
+    "            byId('action-message').textContent = made.alreadyExisted\n" +
+    "              ? `This video already has a ${levels[pick.value].label} job; both are in the list.`\n" +
+    "              : `Added: the same video at ${levels[pick.value].label}. The current summary stays as it is.`;\n" +
+    "          } catch (error) { byId('action-message').textContent = 'Could not add it: ' + error.message; }\n" +
+    "          finally { go.disabled = false; }\n" +
+    "        });\n" +
+    "      }\n" +
+    "      row.againJobId = job.Id;\n" +
+    "      row.again.hidden = job.State !== 'completed';\n" +
+    "      if (!row.again.hidden && row.again.dataset.level !== job.SummaryLevel) {\n" +
+    "        row.again.dataset.level = job.SummaryLevel;\n" +
+    "        row.again.firstChild.replaceChildren(...Object.keys(levels).filter((k) => k !== job.SummaryLevel).map((k) => {\n" +
+    "          const o = document.createElement('option'); o.value = k; o.textContent = levels[k].label; return o; }));\n" +
+    "      }"],
   // Search also matches the channel/playlist name.
   ["const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''}`.toLowerCase();",
     "const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''} ${job.SourceTitle || ''}`.toLowerCase();"],

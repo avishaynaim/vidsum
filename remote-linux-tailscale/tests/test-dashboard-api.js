@@ -663,6 +663,36 @@ async function testWhisperBusy() {
   assert.strictEqual((await handleApi(scheduler, 'GET', '/api/status', null)).whisperFallback, false);
 }
 
+// "Summarize again at another level": a second job, the first one kept as it is; the two
+// never run at the same time (one checkpoint file per video).
+async function testResummarize() {
+  const fake = controllableRunner();
+  const { store, scheduler } = makeScheduler(tmpDir(), fake.runner);
+  const first = await handleApi(scheduler, 'POST', '/api/jobs', { videoId: 'SSSSSSSSSSS', requestId: crypto.randomUUID(), summaryLevel: 'ultra' }, 'general');
+  first.SourceTitle = 'Chan';
+  await tick();
+  fake.pending.get('SSSSSSSSSSS').resolve({ text: 'long', provider: 'Claude' });
+  await tick(); await tick();
+  assert.strictEqual(first.State, 'completed');
+  const second = await handleApi(scheduler, 'POST', '/api/resummarize', { jobId: first.Id, summaryLevel: 'min' });
+  assert.notStrictEqual(second.Id, first.Id);
+  assert.strictEqual(second.SummaryLevel, 'min');
+  assert.strictEqual(second.Space, 'general', 'stays in the same dashboard');
+  assert.strictEqual(second.SourceTitle, 'Chan');
+  assert.strictEqual(first.State, 'completed', 'the first summary is kept');
+  assert.strictEqual(store.jobs.filter((j) => j.VideoId === 'SSSSSSSSSSS').length, 2);
+  const again = await handleApi(scheduler, 'POST', '/api/resummarize', { jobId: first.Id, summaryLevel: 'min' });
+  assert.strictEqual(again.alreadyExisted, true, 'asking twice does not make a third job');
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/resummarize', { jobId: first.Id, summaryLevel: 'ultra' }), /already summarized at that level/);
+
+  // Same video at two levels, both queued: only one runs at a time.
+  await handleApi(scheduler, 'POST', '/api/settings', { maxConcurrent: 3 });
+  const a = await add(scheduler, 'TTTTTTTTTTT', { summaryLevel: 'reg' });
+  const b = await add(scheduler, 'TTTTTTTTTTT', { summaryLevel: 'max' });
+  await tick();
+  assert.strictEqual([a, b].filter((j) => scheduler.running.has(j.Id)).length, 1);
+}
+
 // Torah / regular dashboards: one queue, but each sees and acts on only its own videos,
 // channels and searches; jobs from before the split belong to the Torah one.
 async function testSpaces() {
@@ -705,6 +735,7 @@ module.exports = async function run() {
   await testSpaces();
   await testRateLimitWait();
   await testWhisperBusy();
+  await testResummarize();
 };
 
 if (require.main === module) {

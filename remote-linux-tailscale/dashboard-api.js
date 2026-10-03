@@ -593,7 +593,10 @@ class Scheduler {
         return;
       }
       const waiting = (j) => j.WaitUntilUtc && Date.parse(j.WaitUntilUtc) > Date.now();
-      const job = this.store.jobs.find((j) => j.State === 'queued' && !j.WatchLater && !this.running.has(j.Id) && !waiting(j));
+      // Two jobs of one video (different levels) share its checkpoint file: never run them together.
+      const busyVideos = new Set([...this.running.keys()].map((id) => (this.store.get(id) || {}).VideoId));
+      const job = this.store.jobs.find((j) => j.State === 'queued' && !j.WatchLater && !this.running.has(j.Id) && !waiting(j) &&
+        !busyVideos.has(j.VideoId));
       if (!job) return;
       this.memoryLimited = false;
       this.run(job); // registers itself in this.running before its first await
@@ -835,6 +838,22 @@ class Scheduler {
     this.store.save(job);
     if (watchLater) this.cancelCurrent(job, 'watch-later');
     else this.pump();
+  }
+
+  // "Summarize again at another level": a NEW job for the same video at `level`; the finished
+  // one and its summary stay as they are. Same dashboard and source label as the original.
+  resummarize(id, level) {
+    const job = this.find(id);
+    if (!LEVELS.includes(level)) throw new ApiError(400, 'A valid jobId and summaryLevel are required.');
+    if (job.SummaryLevel === level) throw new ApiError(409, 'This video is already summarized at that level.');
+    const existing = this.store.jobs.find((j) => j.VideoId === job.VideoId && j.SummaryLevel === level && spaceOf(j) === spaceOf(job));
+    if (existing) return { ...existing, alreadyExisted: true };
+    const copy = this.enqueue({ videoId: job.VideoId, requestId: crypto.randomUUID(), title: job.Title, summaryLevel: level }, spaceOf(job));
+    Object.assign(copy, { SourceKind: job.SourceKind, SourceTitle: job.SourceTitle, SourceUrl: job.SourceUrl });
+    if (job.DurationSeconds && !copy.DurationSeconds) copy.DurationSeconds = job.DurationSeconds;
+    if (job.NoTranscriptConfirmed) copy.NoTranscriptConfirmed = true;
+    this.store.save(copy);
+    return copy;
   }
 
   setLevel(id, level) {
@@ -1081,6 +1100,7 @@ async function handleApi(scheduler, method, pathname, body, space = null) {
     case '/api/delete-job': scheduler.deleteJob(body.jobId); return { deleted: true };
     case '/api/watch-later': scheduler.setWatchLater(body.jobId, body.watchLater); return { updated: true };
     case '/api/set-job-level': scheduler.setLevel(body.jobId, body.summaryLevel); return { updated: true };
+    case '/api/resummarize': return scheduler.resummarize(body.jobId, body.summaryLevel);
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
     case '/api/details': return scheduler.details(body.jobId);
     case '/api/import': return scheduler.importList(body, space);
