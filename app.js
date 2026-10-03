@@ -963,6 +963,7 @@
     }
     updateFilterCounts(jobs);
     const lastCategory = {active: null, history: null};
+    const placedCount = new Map(); // container -> tiles already in their final place this render
     for (const job of orderedJobs) {
       let row = rows.get(job.Id);
       if (!row) {
@@ -1335,13 +1336,18 @@
           const total = groupTotals.get(meta.section + ':' + category) || 0;
           row.element.dataset.groupLabel = `${CATEGORY_LABEL.get(category) || category} · ${total}`;
         } else delete row.element.dataset.groupLabel;
-        // Always re-append (moving the node to the end if it is already the container's
-        // child), not just when the section changes: with independent per-section sort
-        // modes, two jobs can swap places within the same section between renders, and a
-        // real appendChild()/this fixture's append() must reflect that new order every time.
+        // Re-append (moving the node to the end) only when the tile is not already in its place:
+        // with independent per-section sort modes, two jobs can swap places within the same
+        // section between renders, and the order must follow. But moving a tile on every
+        // 1.5 s poll closed any dropdown open on it (e.g. its level menu), so a tile already
+        // at the right index stays put; a container holds only the visible tiles, in order.
         const container = byId(meta.section === 'active' ? 'jobs-active' : 'jobs-history');
-        if (row.element.parentNode) row.element.remove();
-        container.append(row.element);
+        const index = placedCount.get(container) || 0;
+        if (container.children[index] !== row.element) {
+          if (row.element.parentNode) row.element.remove();
+          container.append(row.element);
+        }
+        placedCount.set(container, index + 1);
         row.section = meta.section;
       }
 
