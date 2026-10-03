@@ -86,25 +86,31 @@ const SCRIPT_REPLACEMENTS = [
     "      row.levelSelect.hidden = (job.State !== 'queued' && meta.section !== 'history') || job.State === 'completed';\n" +
     "      if (!row.again) {\n" +
     "        const pick = document.createElement('select'); pick.className = 'job-level-select';\n" +
-    "        const go = document.createElement('button'); go.textContent = 'Summarize again at this level';\n" +
+    "        pick.title = 'Make another summary of this video at a different level; this one stays.';\n" +
     "        row.again = document.createElement('span'); row.again.className = 'again-level';\n" +
-    "        row.again.append(pick, go); row.levelSelect.after(row.again);\n" +
-    "        go.addEventListener('click', async () => {\n" +
-    "          go.disabled = true;\n" +
+    "        row.again.append(pick); row.levelSelect.after(row.again);\n" +
+    "        // Choosing a level is the action (a separate button was easy to miss).\n" +
+    "        pick.addEventListener('change', async () => {\n" +
+    "          const level = pick.value; if (!level) return;\n" +
+    "          const current = levels[row.again.dataset.level] ? levels[row.again.dataset.level].label : 'current';\n" +
+    "          if (!confirm(`Make a new ${levels[level].label} summary of this video? The ${current} summary stays.`)) { pick.value = ''; return; }\n" +
+    "          pick.disabled = true;\n" +
     "          try {\n" +
-    "            const made = await request('/api/resummarize', 'POST', { jobId: row.againJobId, summaryLevel: pick.value });\n" +
+    "            const made = await request('/api/resummarize', 'POST', { jobId: row.againJobId, summaryLevel: level });\n" +
     "            byId('action-message').textContent = made.alreadyExisted\n" +
-    "              ? `This video already has a ${levels[pick.value].label} job; both are in the list.`\n" +
-    "              : `Added: the same video at ${levels[pick.value].label}. The current summary stays as it is.`;\n" +
-    "          } catch (error) { byId('action-message').textContent = 'Could not add it: ' + error.message; }\n" +
-    "          finally { go.disabled = false; }\n" +
+    "              ? `This video already has a ${levels[level].label} job; both are in the list.`\n" +
+    "              : `Added: the same video at ${levels[level].label}. The ${current} summary stays as it is.`;\n" +
+    "            alert(byId('action-message').textContent);\n" +
+    "          } catch (error) { alert('Could not add it: ' + error.message); }\n" +
+    "          finally { pick.value = ''; pick.disabled = false; }\n" +
     "        });\n" +
     "      }\n" +
     "      row.againJobId = job.Id;\n" +
     "      row.again.hidden = job.State !== 'completed';\n" +
     "      if (!row.again.hidden && row.again.dataset.level !== job.SummaryLevel) {\n" +
     "        row.again.dataset.level = job.SummaryLevel;\n" +
-    "        row.again.firstChild.replaceChildren(...Object.keys(levels).filter((k) => k !== job.SummaryLevel).map((k) => {\n" +
+    "        const head = document.createElement('option'); head.value = ''; head.textContent = '＋ Summarize again at…';\n" +
+    "        row.again.firstChild.replaceChildren(head, ...Object.keys(levels).filter((k) => k !== job.SummaryLevel).map((k) => {\n" +
     "          const o = document.createElement('option'); o.value = k; o.textContent = levels[k].label; return o; }));\n" +
     "      }"],
   // Search also matches the channel/playlist name.
