@@ -1204,8 +1204,9 @@
     whisperBox.checked = status.whisperFallback !== false;
     whisperNote.textContent = status.whisperMissing
       ? `Not set up on the server (missing ${status.whisperMissing}); videos with no captions fail as before.`
-      : 'A video with no captions is first transcribed through NotebookLM (minutes). Only if that fails, Whisper ' +
-        'transcribes it on this server: one video at a time and very slowly here (several times the video length).';
+      : 'A video with no captions is transcribed through NotebookLM (about 2 minutes). Only if that fails, Whisper ' +
+        'transcribes it on this server, and this machine is far too slow for it: measured over 30× the video length ' +
+        '(a 1-hour video takes a day or more, with 3 of the 4 cores busy). Best left off here.';
   }).catch(() => {});
   api('/config').then((config) => {
     signInBlock.hidden = !config.signIn;

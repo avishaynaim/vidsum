@@ -40,20 +40,27 @@ function whisperMissing(paths = whisperPaths()) {
   return missing.join(', ');
 }
 
-function run(cmd, args, { onLine = null, timeoutMs = 0 } = {}) {
+function run(cmd, args, { onLine = null, timeoutMs = 0, signal = null } = {}) {
   return new Promise((resolve, reject) => {
+    if (signal && signal.aborted) { reject(Object.assign(new Error('Stopped.'), { stopped: true })); return; }
     // nice 19: Whisper must never starve the browser the summaries run in.
-    const child = spawn('nice', ['-n', '19', cmd, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    // Its own process group, so a stop ends it and anything it started.
+    const child = spawn('nice', ['-n', '19', cmd, ...args], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    // Stop / Pause all end it at once (it used to keep running for hours after a pause).
+    const onAbort = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } };
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
     let err = '';
     const timer = timeoutMs ? setTimeout(() => child.kill('SIGKILL'), timeoutMs) : null;
     const lines = (chunk) => { if (onLine) String(chunk).split(/\r?\n/).forEach((l) => l && onLine(l)); };
     child.stdout.on('data', lines);
     child.stderr.on('data', (chunk) => { err = (err + chunk).slice(-4000); lines(chunk); });
     child.on('error', reject);
-    child.on('close', (code, signal) => {
+    child.on('close', (code, killSignal) => {
       if (timer) clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`${path.basename(cmd)} ${signal ? `was killed (${signal})` : `exited with ${code}`}: ${err.trim().split('\n').pop() || ''}`));
+      if (signal) signal.removeEventListener('abort', onAbort);
+      if (signal && signal.aborted) reject(Object.assign(new Error('Stopped.'), { stopped: true }));
+      else if (code === 0) resolve();
+      else reject(new Error(`${path.basename(cmd)} ${killSignal ? `was killed (${killSignal})` : `exited with ${code}`}: ${err.trim().split('\n').pop() || ''}`));
     });
   });
 }
@@ -64,7 +71,7 @@ let busy = false;
  * Transcribes `videoId` locally. Throws `{ whisperBusy: true }` at once if another video is
  * already being transcribed. deps.findYtDlp: transcript.js's yt-dlp lookup.
  */
-async function transcribeWithWhisper(videoId, { onStatus = () => {}, findYtDlp } = {}) {
+async function transcribeWithWhisper(videoId, { onStatus = () => {}, findYtDlp, signal = null } = {}) {
   const paths = whisperPaths();
   const missing = whisperMissing(paths);
   if (missing) throw new Error(`local Whisper is not set up (missing ${missing})`);
@@ -81,17 +88,17 @@ async function transcribeWithWhisper(videoId, { onStatus = () => {}, findYtDlp }
       onStatus('Local speech-to-text: downloading the audio...');
       await run(ytDlp, ['--no-warnings', '--no-playlist', '--js-runtimes', `node:${process.execPath}`,
         '-f', 'ba[ext=m4a]/ba', '-S', '+abr', '-o', path.join(dir, 'audio.%(ext)s'),
-        `https://www.youtube.com/watch?v=${videoId}`], { timeoutMs: 30 * 60 * 1000 });
+        `https://www.youtube.com/watch?v=${videoId}`], { timeoutMs: 30 * 60 * 1000, signal });
       audio = path.join(dir, fs.readdirSync(dir).find((f) => f.startsWith('audio.')));
     }
     const wav = path.join(dir, 'audio.wav');
     await run('ffmpeg', ['-loglevel', 'error', '-y', '-i', audio, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav],
-      { timeoutMs: 30 * 60 * 1000 });
+      { timeoutMs: 30 * 60 * 1000, signal });
     onStatus('Local speech-to-text (Whisper) started. On this server it takes several times the video length.');
     let last = -1;
     await run(paths.cli, ['-m', paths.model, '-l', paths.language, '-t', paths.threads, '-pp', '-nt',
       '-otxt', '-of', path.join(dir, 'out'), '-f', wav], {
-      timeoutMs: 48 * 3600 * 1000,
+      timeoutMs: 48 * 3600 * 1000, signal,
       onLine: (line) => {
         const m = /progress\s*=\s*(\d+)%/.exec(line);
         if (m && Number(m[1]) >= last + 5) {

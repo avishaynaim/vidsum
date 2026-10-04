@@ -236,10 +236,11 @@ function findYtTranscript(deps = {}) {
 
 let audioQueue = Promise.resolve();
 
-function transcribeAudio(videoId, bin) {
+function transcribeAudio(videoId, bin, signal = null) {
   const run = audioQueue.then(() => new Promise((resolve, reject) => {
     execFile(bin, ['--json', '-q', '--retry-failed', '--lang', 'iw', '--lang', 'he', videoId],
-      { maxBuffer: 64 * 1024 * 1024, timeout: 90 * 60 * 1000 }, (err, stdout, stderr) => {
+      { maxBuffer: 64 * 1024 * 1024, timeout: 90 * 60 * 1000, ...(signal ? { signal } : {}) }, (err, stdout, stderr) => {
+        if (signal && signal.aborted) return reject(Object.assign(new Error('Stopped.'), { stopped: true }));
         let out = null;
         try { out = JSON.parse(stdout); } catch { /* reported below */ }
         const t = out && out.transcripts && out.transcripts[0];
@@ -261,7 +262,7 @@ function transcribeAudio(videoId, bin) {
  * captions exist, so a retry can skip that check: options.noCaptionsConfirmed) and
  * `whisperBusy` (Whisper is busy with another video: wait in the queue, not a failure).
  */
-async function fetchTranscript(videoId, { onStatus = () => {}, whisper = false, noCaptionsConfirmed = false } = {}) {
+async function fetchTranscript(videoId, { onStatus = () => {}, whisper = false, noCaptionsConfirmed = false, signal = null } = {}) {
   assertValidVideoId(videoId);
   if (!noCaptionsConfirmed) {
     let captionError;
@@ -275,7 +276,7 @@ async function fetchTranscript(videoId, { onStatus = () => {}, whisper = false, 
       if (!audioBin) return captions;
       onStatus(`No Hebrew captions (only ${captions.language}); transcribing the Hebrew audio instead (takes a few minutes)...`);
       try {
-        return await transcribeAudio(videoId, audioBin);
+        return await transcribeAudio(videoId, audioBin, signal);
       } catch (err) {
         onStatus(`Audio transcription failed (${err.message}); using the ${captions.language} captions instead.`);
         return captions;
@@ -294,7 +295,7 @@ async function fetchTranscript(videoId, { onStatus = () => {}, whisper = false, 
   if (bin) {
     onStatus('This video has no captions on YouTube; transcribing its audio instead (takes a few minutes)...');
     try {
-      return await transcribeAudio(videoId, bin);
+      return await transcribeAudio(videoId, bin, signal);
     } catch (err) {
       failures.push(err.message);
       if (!whisper && RATE_LIMITED.test(err.message)) {
@@ -305,8 +306,9 @@ async function fetchTranscript(videoId, { onStatus = () => {}, whisper = false, 
   if (whisper) {
     const { transcribeWithWhisper } = require('./whisper');
     try {
-      return await transcribeWithWhisper(videoId, { onStatus, findYtDlp });
+      return await transcribeWithWhisper(videoId, { onStatus, findYtDlp, signal });
     } catch (err) {
+      if (err.stopped) throw err;
       if (err.whisperBusy) throw noCaptions(err);
       failures.push(`local Whisper failed: ${err.message}`);
     }

@@ -136,8 +136,9 @@ async function runVideo(args, onStatus) {
     let fetched;
     try {
       fetched = await transcriptMod.fetchTranscript(args.videoId,
-        { onStatus, whisper: !!args.whisperFallback, noCaptionsConfirmed: !!args.noCaptionsConfirmed });
+        { onStatus, whisper: !!args.whisperFallback, noCaptionsConfirmed: !!args.noCaptionsConfirmed, signal: args.signal || null });
     } catch (err) {
+      if (err.stopped) throw err; // Stop / Pause all, not a transcript failure
       if (err.whisperBusy) throw err; // not a failure: the dashboard puts the video back in line
       if (err.noCaptions && args.onNoCaptions) args.onNoCaptions();
       // YouTube sometimes answers without captions or not at all (busy, rate limits, a busy
