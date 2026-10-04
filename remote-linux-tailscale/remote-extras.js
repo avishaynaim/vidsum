@@ -159,6 +159,92 @@
   viewer.addEventListener('click', (event) => { if (event.target === viewer) viewer.close(); }); // backdrop
   viewer.append(el('div', { className: 'viewer-head' }, el('div', {}, viewerTitle, viewerMeta), closeViewer), viewerScroll);
 
+  // ---- Auto-scroll (teleprompter) for reading on a phone without scrolling by hand. ----
+  // ▶/⏸ scrolls the summary smoothly at an adjustable speed (remembered on this device).
+  // A touch pauses it (to reread something); it continues by itself 2 s after the finger
+  // lifts. "Next section" jumps to the next part. It stops at the end and when closed.
+  const SPEEDS = [8, 12, 16, 21, 27, 34, 42, 52, 64, 80]; // pixels per second
+  const SPEED_KEY = 'yt-summary-autoscroll-speed';
+  let speedIndex = 3;
+  try { const saved = localStorage.getItem(SPEED_KEY); const v = Number(saved); if (saved !== null && saved !== '' && Number.isInteger(v) && v >= 0 && v < SPEEDS.length) speedIndex = v; } catch {}
+  let playing = false;
+  let heldByTouch = false;
+  let resumeTimer = null;
+  let frame = null;
+  let lastTime = 0;
+  let position = 0; // fractional scrollTop (browsers round scrollTop)
+  let wakeLock = null;
+  const playButton = el('button', { type: 'button', className: 'autoscroll-play', title: 'Auto-scroll' }, '▶ Auto-scroll');
+  const slower = el('button', { type: 'button', title: 'Slower' }, '−');
+  const faster = el('button', { type: 'button', title: 'Faster' }, '+');
+  const speedLabel = el('span', { className: 'autoscroll-speed' });
+  const nextSection = el('button', { type: 'button', title: 'Jump to the next section' }, 'Next section ⤓');
+  const autoBar = el('div', { className: 'autoscroll-bar' }, playButton, slower, speedLabel, faster, nextSection);
+  viewer.append(autoBar);
+  const showSpeed = () => { speedLabel.textContent = `Speed ${speedIndex + 1}`; };
+  showSpeed();
+  const atEnd = () => viewerBody.scrollTop >= viewerBody.scrollHeight - viewerBody.clientHeight - 1;
+
+  function step(time) {
+    frame = null;
+    if (!playing || heldByTouch) return;
+    const dt = lastTime ? Math.min(0.25, (time - lastTime) / 1000) : 0; // a slow phone still keeps the speed
+    lastTime = time;
+    position += SPEEDS[speedIndex] * dt;
+    viewerBody.scrollTop = position;
+    if (atEnd()) { setPlaying(false); return; }
+    frame = requestAnimationFrame(step);
+  }
+  function kick() {
+    if (frame) cancelAnimationFrame(frame);
+    position = viewerBody.scrollTop;
+    lastTime = 0;
+    frame = requestAnimationFrame(step);
+  }
+  async function setPlaying(on) {
+    playing = on;
+    heldByTouch = false;
+    clearTimeout(resumeTimer);
+    playButton.textContent = on ? '⏸ Pause' : '▶ Auto-scroll';
+    playButton.classList.toggle('on', on);
+    if (on) {
+      if (atEnd()) viewerBody.scrollTop = 0;
+      kick();
+      // Keep the screen on while it scrolls by itself (browsers allow this on https only).
+      try { if (navigator.wakeLock && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+    } else {
+      if (frame) cancelAnimationFrame(frame);
+      frame = null;
+      if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    }
+  }
+  playButton.addEventListener('click', () => setPlaying(!playing));
+  const setSpeed = (delta) => {
+    speedIndex = Math.max(0, Math.min(SPEEDS.length - 1, speedIndex + delta));
+    try { localStorage.setItem(SPEED_KEY, String(speedIndex)); } catch {}
+    showSpeed();
+  };
+  slower.addEventListener('click', () => setSpeed(-1));
+  faster.addEventListener('click', () => setSpeed(1));
+  nextSection.addEventListener('click', () => {
+    const top = viewerBody.getBoundingClientRect().top;
+    const next = [...viewerBody.querySelectorAll('.viewer-section')].find((sec) => sec.getBoundingClientRect().top > top + 8);
+    viewerBody.scrollTo({ top: next ? viewerBody.scrollTop + next.getBoundingClientRect().top - top : viewerBody.scrollHeight, behavior: 'smooth' });
+    if (playing) { heldByTouch = true; clearTimeout(resumeTimer); resumeTimer = setTimeout(() => { heldByTouch = false; kick(); }, 1200); }
+  });
+  // A finger (or mouse wheel) on the text takes over; auto-scroll continues after it lets go.
+  const hold = () => { if (!playing) return; heldByTouch = true; clearTimeout(resumeTimer); };
+  const release = () => {
+    if (!playing) return;
+    clearTimeout(resumeTimer);
+    resumeTimer = setTimeout(() => { heldByTouch = false; kick(); }, 2000);
+  };
+  viewerBody.addEventListener('touchstart', hold, { passive: true });
+  viewerBody.addEventListener('touchend', release, { passive: true });
+  viewerBody.addEventListener('touchcancel', release, { passive: true });
+  viewerBody.addEventListener('wheel', () => { hold(); release(); }, { passive: true });
+  viewer.addEventListener('close', () => setPlaying(false));
+
   let labelTimer;
   function updateRail() {
     const { scrollTop, scrollHeight, clientHeight } = viewerBody;
