@@ -349,3 +349,7 @@ body.hide-read .job-card.is-read { display: none; }
 #summary-viewer .viewer-read { flex: 0 0 auto; padding: 4px 10px; font-size: 13px; }
 @media (max-width: 700px) { #summary-viewer .viewer-read { padding: 4px 8px; font-size: 12.5px; } }
 #summary-viewer .viewer-body:focus { outline: none; }
+
+/* ⏸ Pause all / ▶ Resume all in the top bar. */
+#topbar-pause { font-weight: 750; }
+#topbar-pause.paused { background: #f59e0b; color: #0b111a; border-color: #f59e0b; }

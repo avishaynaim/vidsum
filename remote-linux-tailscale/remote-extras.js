@@ -73,7 +73,33 @@
     else document.body.append(panel);
     const state = document.querySelector('.topbar #state');
     if (state) state.before(topIp);
+    if (state) state.after(pauseAll);
   }
+
+  // ⏸ Pause all / ▶ Resume in the top bar. Pausing puts running videos back in the queue with
+  // their progress saved and holds the queue (both dashboards: they share it); Resume continues.
+  const pauseAll = el('button', { id: 'topbar-pause', type: 'button', title: 'Pause or resume all work (Torah and Regular)' }, '⏸ Pause all');
+  let queuePaused = false;
+  const showPause = (paused) => {
+    queuePaused = paused;
+    pauseAll.textContent = paused ? '▶ Resume all' : '⏸ Pause all';
+    pauseAll.classList.toggle('paused', paused);
+  };
+  pauseAll.addEventListener('click', async () => {
+    if (!queuePaused && !confirm('Pause all work? Running videos stop after saving their progress and go back to the queue. Nothing starts until you press Resume all.')) return;
+    pauseAll.disabled = true;
+    try {
+      await post(queuePaused ? '/api/resume' : '/api/stop', {});
+      showPause(!queuePaused);
+    } catch (error) {
+      alert(`Could not ${queuePaused ? 'resume' : 'pause'}: ${error.message}`);
+    } finally {
+      pauseAll.disabled = false;
+    }
+  });
+  const syncPause = () => api('/api/status').then((st) => { if (!pauseAll.disabled) showPause(!!st.paused); }).catch(() => {});
+  syncPause();
+  setInterval(syncPause, 5000);
 
   const LOGIN_TEXT = { 'signed-in': '✅', 'signed-out': '❌ not logged in', 'no-tab': '– not opened', loading: '… loading', unknown: '?' };
   async function refreshLogin() {
