@@ -268,7 +268,7 @@ for (const a of document.querySelectorAll('a[data-space]')) {
 
 // Shown instead of a JSON 401 when a browser opens the dashboard without a valid key, so a
 // cut-off or missing ?token= link still lets the user paste the key and get in.
-function sendLogin(res, failed) {
+function sendLogin(res, failed, next = '') {
   const payload = Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>YT Summary Remote</title>
 <style>body{font:16px system-ui,sans-serif;max-width:420px;margin:auto;padding:24px;background:#111827;color:#f9fafb}
@@ -278,9 +278,12 @@ button{background:#2563eb;color:white;border:0;font-weight:700}.error{color:#fca
 <body><h1>YT Summary Remote</h1><form method="post" action="/login">
 <label for="token">Access key</label>
 <input id="token" name="token" type="password" required autocomplete="current-password" autofocus>
+<input type="hidden" name="next" id="next" value="${DASHBOARD_PATHS.includes(next) ? next : ''}">
 ${failed ? '<p class="error">Wrong key, try again.</p>' : ''}
 <button>Enter</button></form>
 <script>
+// After the key, come back to the page that asked for it (/torah or /general), not the picker.
+if (location.pathname !== '/login') document.getElementById('next').value = location.pathname;
 // A bookmark link carries the key after '#'; log in with it and reopen the same link.
 const key = new URLSearchParams(location.hash.slice(1)).get('token');
 if (key) fetch('/login', {method: 'POST', body: new URLSearchParams({token: key}), redirect: 'manual'})
@@ -415,9 +418,11 @@ function createServer({
       if (url.pathname === '/login' && req.method === 'POST' && token) {
         const remoteAddress = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
         if (!netGuard.isAllowedAddress(remoteAddress)) { sendJson(res, 403, { error: 'Forbidden.' }); return; }
-        const supplied = (new URLSearchParams(await readBody(req, 4096)).get('token') || '').trim();
-        if (!keyMatches(token, supplied)) { sendLogin(res, true); return; }
-        res.writeHead(303, { Location: '/', 'Set-Cookie': sessionCookie(supplied), 'Cache-Control': 'no-store' });
+        const form = new URLSearchParams(await readBody(req, 4096));
+        const supplied = (form.get('token') || '').trim();
+        if (!keyMatches(token, supplied)) { sendLogin(res, true, form.get('next')); return; }
+        const next = DASHBOARD_PATHS.includes(form.get('next')) ? form.get('next') : '/';
+        res.writeHead(303, { Location: next, 'Set-Cookie': sessionCookie(supplied), 'Cache-Control': 'no-store' });
         res.end();
         return;
       }

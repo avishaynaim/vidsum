@@ -34,6 +34,9 @@ const HTML_REPLACEMENTS = [
 ];
 
 const SCRIPT_REPLACEMENTS = [
+  // app.js clears the #token / #videos part of the address by setting it to '/', which on
+  // /torah or /general made a refresh land on the dashboard picker. Keep the path.
+  ["  history.replaceState(null, '', '/');", "  history.replaceState(null, '', location.pathname);"],
   // Bookmarklets made on /torah or /general add their videos to that same dashboard.
   ["  const base = location.origin + '/';", "  const base = location.origin + location.pathname;"],
   ["'Handing this video to the local controller...'", "'Handing this video to the server...'"],
