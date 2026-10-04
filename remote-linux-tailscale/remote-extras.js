@@ -749,13 +749,15 @@
   openTabs.addEventListener('click', () => {
     const ids = [...selected];
     let blocked = 0;
-    for (const id of ids) if (!window.open(`${location.pathname}#summary=${id}`, '_blank')) blocked++;
+    for (const id of ids) {
+      if (window.open(`${location.pathname}#summary=${id}`, '_blank')) selected.delete(id); // opened: leave the selection
+      else blocked++;
+    }
     selNote.hidden = !blocked;
     if (blocked) {
-      selNote.textContent = `The browser blocked ${blocked} of ${ids.length} tabs. Tap the blocked pop-up icon in the address bar, ` +
-        'choose "Always allow pop-ups" for this site, then press Open in tabs again.';
-    } else {
-      selected.clear();
+      selNote.textContent = `The browser blocked ${blocked} of ${ids.length} tabs (it allows one per click). Tap the blocked ` +
+        'pop-up icon in the address bar and choose "Always allow pop-ups" for this site, then press the button again. ' +
+        'Or keep pressing it: each press opens at least the next one.';
     }
     refreshSelection();
   });
