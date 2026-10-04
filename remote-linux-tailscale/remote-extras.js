@@ -261,6 +261,32 @@
   viewerBody.addEventListener('wheel', () => { hold(); release(); }, { passive: true });
   viewer.addEventListener('close', () => setPlaying(false));
 
+  // Keyboard reading: Space / Page Down = a screen down, Shift+Space / Page Up = up, arrows =
+  // a few lines, Home / End = start / end. The text gets the focus when a summary opens (else
+  // the first button had it, and Space pressed "Mark as unread").
+  viewerBody.tabIndex = -1;
+  // After clicking a control (▶, speed, read…), keys go back to the text.
+  viewer.addEventListener('click', (event) => {
+    if (event.target.closest('.autoscroll-bar button, .viewer-read')) setTimeout(() => viewerBody.focus({ preventScroll: true }), 0);
+  });
+  viewer.addEventListener('keydown', (event) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.target.closest('input, textarea, select, [contenteditable]')) return;
+    if (event.key === ' ' && event.target.closest('button, a')) return; // Space on a focused button presses it
+    if (viewer.querySelector('.eye-cal, .eye-tune')) return; // calibrating / fine-tuning
+    const pageStep = viewerBody.clientHeight * 0.9, lineStep = 64;
+    const moves = {
+      ' ': event.shiftKey ? -pageStep : pageStep, PageDown: pageStep, PageUp: -pageStep,
+      ArrowDown: lineStep, ArrowUp: -lineStep, Home: -Infinity, End: Infinity,
+    };
+    if (!(event.key in moves)) return;
+    event.preventDefault();
+    const by = moves[event.key];
+    const top = by === Infinity ? viewerBody.scrollHeight : by === -Infinity ? 0 : viewerBody.scrollTop + by;
+    if (playing) { viewerBody.scrollTop = top; kick(); } // auto-scroll continues from the new spot
+    else viewerBody.scrollTo({ top, behavior: event.repeat ? 'auto' : 'smooth' });
+  });
+
   // ---- 👁 Eye page-turn (beta): eye-scroll.js, loaded only when switched on. ----
   const eyeButton = el('button', { type: 'button', className: 'eye-toggle', title: 'Turn the page with your eyes (beta, https link only)' }, ...label('👁', 'Eyes'));
   autoBar.append(eyeButton);
@@ -377,6 +403,7 @@
     viewerBody.replaceChildren();
     viewer.dataset.jobId = jobId;
     if (!viewer.open) viewer.showModal();
+    viewerBody.focus({ preventScroll: true }); // keys scroll the text, not press the first button
     markRead(jobId);
     showViewerRead(true);
     try {
