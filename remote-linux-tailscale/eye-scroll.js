@@ -129,7 +129,7 @@ const predict = (cal, x) => cal.ym + x.reduce((a, v, j) => a + cal.w[j] * (v - c
 
 const el = (tag, props = {}, ...children) => { const n = Object.assign(document.createElement(tag), props); n.append(...children); return n; };
 
-export async function start({ viewer, body, bar, button, setLookingAway, onStop }) {
+export async function start({ viewer, body, bar, button, label = (icon, text) => [`${icon} ${text}`], setLookingAway, onStop }) {
   if (!window.isSecureContext || !navigator.mediaDevices) {
     throw new Error('The camera only works on the https link. Open the dashboard at https://YOUR-MACHINE.YOUR-TAILNET.ts.net:8443 and try again.');
   }
@@ -173,7 +173,7 @@ export async function start({ viewer, body, bar, button, setLookingAway, onStop 
   bar.append(dot, recal);
   const marker = el('div', { className: 'eye-marker' });
   viewer.append(marker);
-  button.textContent = '👁 On';
+  button.replaceChildren(...label('👁', 'On')); // phones show just 👁, coloured while on
   button.classList.add('on');
 
   let cal = null;
@@ -340,7 +340,7 @@ export async function start({ viewer, body, bar, button, setLookingAway, onStop 
     clearInterval(statsTimer);
     stream.getTracks().forEach((t) => t.stop());
     video.remove(); dot.remove(); recal.remove(); gear.remove(); marker.remove(); viewer.querySelector('.eye-tune')?.remove();
-    button.textContent = '👁 Eyes';
+    button.replaceChildren(...label('👁', 'Eyes'));
     button.classList.remove('on');
     if (away) setLookingAway(false);
     onStop();

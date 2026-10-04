@@ -158,6 +158,8 @@
   closeViewer.addEventListener('click', () => viewer.close());
   viewer.addEventListener('click', (event) => { if (event.target === viewer) viewer.close(); }); // backdrop
   viewer.append(el('div', { className: 'viewer-head' }, el('div', {}, viewerTitle, viewerMeta), closeViewer), viewerScroll);
+  // Phones show the title on one line; a tap shows all of it and the details line.
+  viewerTitle.addEventListener('click', () => viewer.classList.toggle('head-open'));
 
   // ---- Auto-scroll (teleprompter) for reading on a phone without scrolling by hand. ----
   // ▶/⏸ scrolls the summary smoothly at an adjustable speed (remembered on this device).
@@ -175,14 +177,16 @@
   let lastTime = 0;
   let position = 0; // fractional scrollTop (browsers round scrollTop)
   let wakeLock = null;
-  const playButton = el('button', { type: 'button', className: 'autoscroll-play', title: 'Auto-scroll' }, '▶ Auto-scroll');
+  // Icon + a text label (.lbl) that phones hide, so the bar stays one thin row there.
+  const label = (icon, text) => [icon, el('span', { className: 'lbl' }, ` ${text}`)];
+  const playButton = el('button', { type: 'button', className: 'autoscroll-play', title: 'Auto-scroll' }, ...label('▶', 'Auto-scroll'));
   const slower = el('button', { type: 'button', title: 'Slower' }, '−');
   const faster = el('button', { type: 'button', title: 'Faster' }, '+');
   const speedLabel = el('span', { className: 'autoscroll-speed' });
-  const nextSection = el('button', { type: 'button', title: 'Jump to the next section' }, 'Next section ⤓');
+  const nextSection = el('button', { type: 'button', title: 'Jump to the next section' }, ...label('⤓', 'Next section'));
   const autoBar = el('div', { className: 'autoscroll-bar' }, playButton, slower, speedLabel, faster, nextSection);
   viewer.append(autoBar);
-  const showSpeed = () => { speedLabel.textContent = `Speed ${speedIndex + 1}`; };
+  const showSpeed = () => { speedLabel.replaceChildren(el('span', { className: 'lbl' }, 'Speed '), String(speedIndex + 1)); };
   showSpeed();
   const atEnd = () => viewerBody.scrollTop >= viewerBody.scrollHeight - viewerBody.clientHeight - 1;
 
@@ -206,7 +210,7 @@
     playing = on;
     heldByTouch = false;
     clearTimeout(resumeTimer);
-    playButton.textContent = on ? '⏸ Pause' : '▶ Auto-scroll';
+    playButton.replaceChildren(...(on ? label('⏸', 'Pause') : label('▶', 'Auto-scroll')));
     playButton.classList.toggle('on', on);
     if (on) {
       if (atEnd()) viewerBody.scrollTop = 0;
@@ -247,7 +251,7 @@
   viewer.addEventListener('close', () => setPlaying(false));
 
   // ---- 👁 Eye page-turn (beta): eye-scroll.js, loaded only when switched on. ----
-  const eyeButton = el('button', { type: 'button', className: 'eye-toggle', title: 'Turn the page with your eyes (beta, https link only)' }, '👁 Eyes');
+  const eyeButton = el('button', { type: 'button', className: 'eye-toggle', title: 'Turn the page with your eyes (beta, https link only)' }, ...label('👁', 'Eyes'));
   autoBar.append(eyeButton);
   let eyeSession = null;
   eyeButton.addEventListener('click', async () => {
@@ -256,7 +260,7 @@
     try {
       const { start } = await import('/eye-scroll.js');
       eyeSession = await start({
-        viewer, body: viewerBody, bar: autoBar, button: eyeButton,
+        viewer, body: viewerBody, bar: autoBar, button: eyeButton, label,
         // Auto-scroll waits while you look away, and continues when you look back.
         setLookingAway: (away) => {
           if (heldByEyes === away) return;
@@ -266,7 +270,7 @@
         onStop: () => { eyeSession = null; heldByEyes = false; if (playing && !heldByTouch) kick(); },
       });
     } catch (error) {
-      eyeButton.textContent = '👁 Eyes';
+      eyeButton.replaceChildren(...label('👁', 'Eyes'));
       alert(error.message);
     } finally {
       eyeButton.disabled = false;
