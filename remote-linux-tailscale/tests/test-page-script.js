@@ -15,7 +15,7 @@ module.exports = function testPageScriptLoads() {
     construct: () => node(),
   });
   const env = {
-    document: node(), window: node(), sessionStorage: { getItem: () => '' },
+    document: node(), window: node(), history: node(), location: node(), sessionStorage: { getItem: () => '' },
     localStorage: { getItem: () => null, setItem() {} }, fetch: () => new Promise(() => {}),
     AbortSignal: { timeout: () => undefined }, ResizeObserver: class { observe() {} },
     MutationObserver: class { observe() {} }, requestAnimationFrame: () => 0, setInterval: () => 0,

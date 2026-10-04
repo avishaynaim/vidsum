@@ -250,6 +250,7 @@
     viewerTitle.textContent = 'Loading…';
     viewerMeta.textContent = '';
     viewerBody.replaceChildren();
+    viewer.dataset.jobId = jobId;
     if (!viewer.open) viewer.showModal();
     markRead(jobId);
     try {
@@ -811,22 +812,38 @@
 
   mount();
   document.body.append(viewer, searchDialog);
-  // Closing a dialog gives focus back to whatever had it before it opened (a tap on a tile
-  // focuses nothing, so often something far down the page), and the browser scrolls there:
-  // after reading a summary the list jumped to the end. Put the page back where it was.
+  // Each open dialog (summary viewer, search) gets its own history entry (#summary=<id> /
+  // #search), so the phone's Back button closes it and returns to the list instead of leaving
+  // the dashboard. Closing it any other way (✕, backdrop, Esc) drops that entry again.
+  // Closing a dialog also gives focus back to whatever had it before it opened (a tap on a tile
+  // focuses nothing, so often something far down the page) and the browser scrolls there:
+  // after reading a summary the list jumped to the end. So the page is put back where it was.
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
   for (const dialog of [viewer, searchDialog]) {
     let saved = null;
     const showModal = dialog.showModal.bind(dialog);
-    dialog.showModal = () => { saved = { x: window.scrollX, y: window.scrollY }; showModal(); };
+    dialog.showModal = () => {
+      saved = { x: window.scrollX, y: window.scrollY };
+      showModal();
+      const hash = dialog === viewer && dialog.dataset.jobId ? `#summary=${dialog.dataset.jobId}` : '#search';
+      history.pushState({ dialog: dialog.id }, '', location.pathname + hash);
+    };
     dialog.addEventListener('close', () => {
+      if (history.state && history.state.dialog === dialog.id) history.back(); // closed by ✕/Esc
       if (!saved) return;
       const { x, y } = saved;
       saved = null;
       if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
       window.scrollTo(x, y);
       requestAnimationFrame(() => window.scrollTo(x, y)); // after any late focus scroll
+      setTimeout(() => window.scrollTo(x, y), 250); // and after Back's own navigation settles
     });
   }
+  window.addEventListener('popstate', () => {
+    for (const dialog of [viewer, searchDialog]) {
+      if (dialog.open && !(history.state && history.state.dialog === dialog.id)) dialog.close(); // Back
+    }
+  });
   const topState = document.querySelector('.topbar #state');
   if (topState) topIp.before(searchButton);
   const clearFailed = document.querySelector('#clear-errors');
