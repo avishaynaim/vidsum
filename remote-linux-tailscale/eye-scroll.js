@@ -104,7 +104,7 @@ export async function start({ viewer, body, bar, button, setLookingAway, onStop 
   let cal = null;
   try { cal = JSON.parse(localStorage.getItem(CAL_KEY)); } catch {}
   let stopped = false, raf = null, lastRun = 0, y = 0.5, lastFace = 0, away = false;
-  let current = null; // latest raw features
+  let collecting = null; // during calibration: { y, samples } filled by every camera frame
   let zone = 'mid', zoneSince = performance.now(), armedUntil = 0, armed = false, cooldownUntil = 0;
 
   function loop(now) {
@@ -115,7 +115,8 @@ export async function start({ viewer, body, bar, button, setLookingAway, onStop 
     let result;
     try { result = landmarker.detectForVideo(video, now); } catch { return; }
     const f = features(result);
-    current = f;
+    if (window.__eyeDebug) window.__eyeLast = f; // tuning: see the raw readings from the console
+    if (collecting && f && f.blink < 0.5) collecting.samples.push({ x: f.x, y: collecting.y });
     if (!f) {
       dot.className = 'eye-dot';
       if (!away && now - lastFace > T.awayMs) { away = true; setLookingAway(true); }
@@ -164,13 +165,11 @@ export async function start({ viewer, body, bar, button, setLookingAway, onStop 
       for (const ty of [0.12, 0.5, 0.88]) {
         target.style.top = `${ty * 100}%`;
         await new Promise((r) => setTimeout(r, 700)); // eyes travel
-        const end = performance.now() + 1300;
-        while (performance.now() < end && !stopped) {
-          if (current && current.blink < 0.5) samples.push({ x: current.x, y: ty });
-          await new Promise((r) => setTimeout(r, 1000 / T.fps));
-        }
+        collecting = { y: ty, samples };
+        await new Promise((r) => setTimeout(r, 1300));
+        collecting = null;
       }
-    } finally { overlay.remove(); }
+    } finally { collecting = null; overlay.remove(); }
     if (samples.length < 12) throw new Error('Your face was not seen well enough. Hold the phone in front of you, in good light, and try again.');
     cal = fit(samples);
     try { localStorage.setItem(CAL_KEY, JSON.stringify(cal)); } catch {}

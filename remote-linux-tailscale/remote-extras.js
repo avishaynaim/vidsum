@@ -730,7 +730,7 @@
     if (card) card.classList.toggle('is-read', read); // at once; the next poll confirms it
     return post('/api/mark-read', { jobId, read }).catch(() => {});
   }
-  window.ytMarkRead = markRead; // the tile's "Mark unread" button (remote-dashboard.js)
+  window.ytMarkRead = markRead; // the tile's "Mark as read / unread" button (remote-dashboard.js)
   window.ytOpenViewer = openViewer; // the tile's "Open summary" button (remote-dashboard.js)
   // "Hide read" chip next to the status filters; remembered in this browser.
   const HIDE_READ_KEY = 'yt-summary-hide-read';

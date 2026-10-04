@@ -122,14 +122,17 @@ const SCRIPT_REPLACEMENTS = [
     "      row.state.textContent = job.State + (job.WatchLater ? ' · Watch later' : '');\n" +
     "      if (!row.read) {\n" +
     "        row.read = document.createElement('span'); row.read.className = 'read-badge';\n" +
-    "        const label = document.createElement('span'); const undo = document.createElement('button');\n" +
-    "        undo.type = 'button'; undo.className = 'read-undo'; undo.textContent = 'Mark unread';\n" +
-    "        undo.addEventListener('click', () => window.ytMarkRead && window.ytMarkRead(row.readJobId, false));\n" +
-    "        row.read.append(label, undo); row.state.before(row.read);\n" +
+    "        row.state.before(row.read);\n" +
+    "        // A clear button in the tile's own row: Mark as unread / Mark as read.\n" +
+    "        row.readToggle = document.createElement('button'); row.readToggle.type = 'button'; row.readToggle.className = 'read-toggle';\n" +
+    "        row.readToggle.addEventListener('click', () => window.ytMarkRead && window.ytMarkRead(row.readJobId, !row.readIsRead));\n" +
+    "        row.levelSelect.parentNode.prepend(row.readToggle);\n" +
     "      }\n" +
-    "      row.readJobId = job.Id;\n" +
+    "      row.readJobId = job.Id; row.readIsRead = !!job.ReadAt;\n" +
     "      row.read.hidden = !job.ReadAt;\n" +
-    "      if (job.ReadAt) row.read.firstChild.textContent = '✓ Read ' + new Date(job.ReadAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });\n" +
+    "      if (job.ReadAt) row.read.textContent = '✓ Read ' + new Date(job.ReadAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });\n" +
+    "      row.readToggle.hidden = job.State !== 'completed' && !job.ReadAt;\n" +
+    "      row.readToggle.textContent = job.ReadAt ? '↺ Mark as unread' : '✓ Mark as read';\n" +
     "      row.element.classList.toggle('is-read', !!job.ReadAt);"],
   // The tile's class list is rebuilt here on every render, so the read mark must be part of it.
   ["          (hasTranscript ? ' has-saved-transcript' : '');",
