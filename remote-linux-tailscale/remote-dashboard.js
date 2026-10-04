@@ -14,6 +14,8 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 
 const HTML_REPLACEMENTS = [
+  // "Read date" in both sort menus (Active, History); the order logic is in SCRIPT_REPLACEMENTS.
+  ['<option value="created">Created date</option>', '<option value="created">Created date</option>\n              <option value="read">Read date</option>'],
   ['<span>local only</span>', '<span>remote server</span>'],
   ['Connecting to your local helper...', 'Connecting to the server...'],
   ['<li>Sign into the provider websites in the separate Chrome window.</li>',
@@ -151,6 +153,12 @@ const SCRIPT_REPLACEMENTS = [
   ["        result.textContent = 'Open final summary';", "        result.textContent = 'Final summary ↗';"],
   ["      row.openAllParts.textContent = `Open all parts (${partResultUrls.length})`;",
     "      row.openAllParts.textContent = `All parts (${partResultUrls.length}) ▾`;"],
+  // "Read date" sort: most recently read first, then unread videos (newest first).
+  ["  const SORT_MODES = ['updated', 'status', 'created', 'title'];", "  const SORT_MODES = ['updated', 'status', 'created', 'read', 'title'];"],
+  ["    title: (left, right) => (left.Title || left.VideoId).localeCompare(right.Title || right.VideoId)\n  };",
+    "    title: (left, right) => (left.Title || left.VideoId).localeCompare(right.Title || right.VideoId),\n" +
+    "    read: (left, right) => (jobSortTime(right.ReadAt) - jobSortTime(left.ReadAt)) ||\n" +
+    "      (jobSortTime(right.CreatedAt) - jobSortTime(left.CreatedAt)) || String(left.VideoId).localeCompare(String(right.VideoId))\n  };"],
   // Search also matches the channel/playlist name.
   ["const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''}`.toLowerCase();",
     "const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''} ${job.SourceTitle || ''}`.toLowerCase();"],
