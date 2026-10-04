@@ -726,11 +726,44 @@
 
   // ---- Read marks: a tile whose summary was opened is dimmed with "✓ Read" (app.js render,
   // patched in remote-dashboard.js), so the same summary is not opened twice by accident. ----
-  function markRead(jobId, read = true) {
+  // Every change is remembered so it can be undone: Ctrl+Z / ⌘Z (outside text boxes), or the
+  // "Undo" in the short note shown after each change (phones have no Ctrl+Z).
+  const readUndo = [];
+  const toast = el('div', { className: 'read-toast', hidden: true });
+  document.body.append(toast);
+  let toastTimer = null;
+  function showToast(text, undoable) {
+    const undo = el('button', { type: 'button' }, 'Undo');
+    undo.addEventListener('click', undoRead);
+    toast.replaceChildren(el('span', {}, text), ...(undoable ? [undo] : []));
+    toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 6000);
+  }
+  function markRead(jobId, read = true, { fromUndo = false } = {}) {
     const card = document.querySelector(`.job-card[data-job-id="${jobId}"]`);
+    const was = card ? card.classList.contains('is-read') : !read;
     if (card) card.classList.toggle('is-read', read); // at once; the next poll confirms it
+    if (!fromUndo && was !== read) {
+      readUndo.push({ jobId, read: was });
+      if (readUndo.length > 20) readUndo.shift();
+      // Opening a summary marks it read silently; only a deliberate button press shows the note.
+      if (!viewer.open) showToast(read ? 'Marked as read' : 'Marked as unread', true);
+    }
     return post('/api/mark-read', { jobId, read }).catch(() => {});
   }
+  function undoRead() {
+    const last = readUndo.pop();
+    if (!last) { showToast('Nothing to undo', false); return; }
+    markRead(last.jobId, last.read, { fromUndo: true });
+    showToast(last.read ? 'Undone: marked as read again' : 'Undone: marked as unread again', false);
+  }
+  document.addEventListener('keydown', (event) => {
+    if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'z') return;
+    if (event.target.closest('input, textarea, select, [contenteditable]')) return; // their own undo
+    event.preventDefault();
+    undoRead();
+  });
   window.ytMarkRead = markRead; // the tile's "Mark as read / unread" button (remote-dashboard.js)
   window.ytOpenViewer = openViewer; // the tile's "Open summary" button (remote-dashboard.js)
   // "Hide read" chip next to the status filters; remembered in this browser.
