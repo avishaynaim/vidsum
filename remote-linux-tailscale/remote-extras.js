@@ -441,10 +441,19 @@
       try {
         const t = await post('/api/transcript', { jobId });
         text = t.text;
-        // One long caption string reads badly: break it into paragraphs of a few sentences.
-        const sentences = text.replace(/\s+/g, ' ').split(/(?<=[.!?:])\s+/);
+        // One long caption string reads badly: paragraphs of a few sentences, or (auto-captions
+        // have no punctuation) of about 60 words.
+        const sentences = text.replace(/\s+/g, ' ').trim().split(/(?<=[.!?:])\s+/);
         const paragraphs = [];
-        for (let i = 0; i < sentences.length; i += 4) paragraphs.push(sentences.slice(i, i + 4).join(' '));
+        let current = [];
+        for (const sentence of sentences) {
+          for (const word of sentence.split(' ')) {
+            current.push(word);
+            if (current.length >= 60) { paragraphs.push(current.join(' ')); current = []; }
+          }
+          if (current.length >= 35) { paragraphs.push(current.join(' ')); current = []; } // a sentence end is a good break
+        }
+        if (current.length) paragraphs.push(current.join(' '));
         body.replaceChildren(...paragraphs.map((p) => el('p', {}, p)));
         copy.hidden = false;
       } catch (error) {
