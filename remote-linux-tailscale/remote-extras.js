@@ -784,6 +784,22 @@
 
   mount();
   document.body.append(viewer, searchDialog);
+  // Closing a dialog gives focus back to whatever had it before it opened (a tap on a tile
+  // focuses nothing, so often something far down the page), and the browser scrolls there:
+  // after reading a summary the list jumped to the end. Put the page back where it was.
+  for (const dialog of [viewer, searchDialog]) {
+    let saved = null;
+    const showModal = dialog.showModal.bind(dialog);
+    dialog.showModal = () => { saved = { x: window.scrollX, y: window.scrollY }; showModal(); };
+    dialog.addEventListener('close', () => {
+      if (!saved) return;
+      const { x, y } = saved;
+      saved = null;
+      if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+      window.scrollTo(x, y);
+      requestAnimationFrame(() => window.scrollTo(x, y)); // after any late focus scroll
+    });
+  }
   const topState = document.querySelector('.topbar #state');
   if (topState) topIp.before(searchButton);
   const clearFailed = document.querySelector('#clear-errors');
