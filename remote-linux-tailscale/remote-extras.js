@@ -157,7 +157,18 @@
   const closeViewer = el('button', { className: 'viewer-close', type: 'button', ariaLabel: 'Close' }, '✕');
   closeViewer.addEventListener('click', () => viewer.close());
   viewer.addEventListener('click', (event) => { if (event.target === viewer) viewer.close(); }); // backdrop
-  viewer.append(el('div', { className: 'viewer-head' }, el('div', {}, viewerTitle, viewerMeta), closeViewer), viewerScroll);
+  // Opening a summary marks it read; this cancels that (and marks it read again if pressed again).
+  const viewerRead = el('button', { type: 'button', className: 'viewer-read', title: 'Opening a summary marks it read; this cancels that' });
+  const showViewerRead = (isRead) => { viewerRead.dataset.read = isRead ? '1' : ''; viewerRead.textContent = isRead ? '↺ Mark as unread' : '✓ Mark as read'; };
+  viewerRead.addEventListener('click', () => {
+    const jobId = viewer.dataset.jobId;
+    if (!jobId) return;
+    const toRead = !viewerRead.dataset.read;
+    markRead(jobId, toRead);
+    if (!toRead) pendingReadNote = false; // no "Marked as read" note when it closes
+    showViewerRead(toRead);
+  });
+  viewer.append(el('div', { className: 'viewer-head' }, el('div', {}, viewerTitle, viewerMeta), viewerRead, closeViewer), viewerScroll);
   // Phones show the title on one line; a tap shows all of it and the details line.
   viewerTitle.addEventListener('click', () => viewer.classList.toggle('head-open'));
 
@@ -367,6 +378,7 @@
     viewer.dataset.jobId = jobId;
     if (!viewer.open) viewer.showModal();
     markRead(jobId);
+    showViewerRead(true);
     try {
       const d = await post('/api/details', { jobId });
       viewerTitle.textContent = d.title || d.videoId;

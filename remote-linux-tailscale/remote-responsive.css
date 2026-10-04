@@ -344,3 +344,7 @@ body.hide-read .job-card.is-read { display: none; }
 .sel-note { margin: 4px 0 8px; color: var(--warn, #fbbf24) !important; }
 .job-card .tile-pick { width: 20px; height: 20px; margin: 0 8px 0 0; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
 .job-card .tile-pick[hidden] { display: none; }
+
+/* "Mark as unread" in the summary viewer's title bar. */
+#summary-viewer .viewer-read { flex: 0 0 auto; padding: 4px 10px; font-size: 13px; }
+@media (max-width: 700px) { #summary-viewer .viewer-read { padding: 4px 8px; font-size: 12.5px; } }
