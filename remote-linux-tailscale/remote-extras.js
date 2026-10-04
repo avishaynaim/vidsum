@@ -729,7 +729,10 @@
   const selNote = el('p', { className: 'muted sel-note', hidden: true });
   const selBar = el('div', { className: 'select-bar' },
     el('label', { title: 'Select every finished video the filters show' }, selectAll, ' Select all'), selCount, openTabs, clearSel);
-  const shownPicks = () => [...document.querySelectorAll('.job-card .tile-pick')].filter((b) => !b.hidden);
+  // Only tiles you can actually see: some are hidden by CSS but still in the page (Hide read,
+  // a collapsed section), and "Select all" counted those too.
+  const visible = (node) => (node.checkVisibility ? node.checkVisibility() : node.offsetParent !== null);
+  const shownPicks = () => [...document.querySelectorAll('.job-card .tile-pick')].filter((b) => !b.hidden && visible(b.closest('.job-card')));
   function refreshSelection() {
     for (const box of shownPicks()) { const id = box.closest('.job-card').dataset.jobId; box.checked = selected.has(id); }
     const shown = shownPicks();
