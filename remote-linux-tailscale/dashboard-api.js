@@ -95,6 +95,12 @@ class JobStore {
     atomicWrite(path.join(this.dir, `${job.Id}.json`), JSON.stringify(job));
   }
 
+  // Saves without touching UpdatedAt: a read mark must not move the tile in a list sorted by
+  // last update (the reader would lose their place).
+  saveQuiet(job) {
+    atomicWrite(path.join(this.dir, `${job.Id}.json`), JSON.stringify(job));
+  }
+
   add(job) {
     job.Sequence = ++this.sequence;
     this.jobs.push(job);
@@ -939,6 +945,16 @@ class Scheduler {
   }
 
   // Everything the tile viewer shows: the final summary (if done) and every finished part.
+  // Read marks: opening a summary marks its video read (ReadAt), so a long list of finished
+  // videos shows which were already read. Kept on the server: the same on every device.
+  markRead(id, read = true) {
+    if (typeof read !== 'boolean') throw new ApiError(400, 'read must be true or false.');
+    const job = this.find(id);
+    job.ReadAt = read ? (job.ReadAt || now()) : null;
+    this.store.saveQuiet(job);
+    return { jobId: job.Id, ReadAt: job.ReadAt };
+  }
+
   details(id) {
     const job = this.find(id);
     let final = null;
@@ -1101,6 +1117,7 @@ async function handleApi(scheduler, method, pathname, body, space = null) {
     case '/api/watch-later': scheduler.setWatchLater(body.jobId, body.watchLater); return { updated: true };
     case '/api/set-job-level': scheduler.setLevel(body.jobId, body.summaryLevel); return { updated: true };
     case '/api/resummarize': return scheduler.resummarize(body.jobId, body.summaryLevel);
+    case '/api/mark-read': return scheduler.markRead(body.jobId, body.read === undefined ? true : body.read);
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
     case '/api/details': return scheduler.details(body.jobId);
     case '/api/import': return scheduler.importList(body, space);

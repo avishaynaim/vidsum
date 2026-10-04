@@ -251,6 +251,7 @@
     viewerMeta.textContent = '';
     viewerBody.replaceChildren();
     if (!viewer.open) viewer.showModal();
+    markRead(jobId);
     try {
       const d = await post('/api/details', { jobId });
       viewerTitle.textContent = d.title || d.videoId;
@@ -604,9 +605,35 @@
   // Tapping anywhere on a tile except its own buttons/links/menus opens the viewer.
   document.addEventListener('click', (event) => {
     const card = event.target.closest('.job-card[data-job-id]');
-    if (!card || event.target.closest('button, a, select, input, label, summary, textarea')) return;
+    if (!card) return;
+    const control = event.target.closest('button, a, select, input, label, summary, textarea');
+    // The tile's own "Open final summary" / "Open all parts" / "Open summary" also count as read.
+    if (control && /^\s*Open (final summary|all parts|summary)/.test(control.textContent)) markRead(card.dataset.jobId);
+    if (control) return;
     openViewer(card.dataset.jobId);
   });
+
+  // ---- Read marks: a tile whose summary was opened is dimmed with "✓ Read" (app.js render,
+  // patched in remote-dashboard.js), so the same summary is not opened twice by accident. ----
+  function markRead(jobId, read = true) {
+    const card = document.querySelector(`.job-card[data-job-id="${jobId}"]`);
+    if (card) card.classList.toggle('is-read', read); // at once; the next poll confirms it
+    return post('/api/mark-read', { jobId, read }).catch(() => {});
+  }
+  window.ytMarkRead = markRead; // the tile's "Mark unread" button (remote-dashboard.js)
+  // "Hide read" chip next to the status filters; remembered in this browser.
+  const HIDE_READ_KEY = 'yt-summary-hide-read';
+  let hideReadSaved = false;
+  try { hideReadSaved = localStorage.getItem(HIDE_READ_KEY) === '1'; } catch {}
+  const hideRead = el('input', { type: 'checkbox', id: 'filter-hide-read', checked: hideReadSaved });
+  const applyHideRead = () => {
+    document.body.classList.toggle('hide-read', hideRead.checked);
+    try { localStorage.setItem(HIDE_READ_KEY, hideRead.checked ? '1' : '0'); } catch {}
+  };
+  hideRead.addEventListener('change', applyHideRead);
+  applyHideRead();
+  const statusChips = document.querySelector('#status-filters .chips');
+  if (statusChips) statusChips.append(el('label', { className: 'provider-toggle', title: 'Hide videos whose summary you already opened' }, hideRead, ' Hide read'));
 
   // ---- Add a playlist or channel: each video becomes its own job. ----
   const LEVEL_NAMES = { ultra: 'Ultra', max: 'Max', reg: 'Reg', min: 'Min', micro: 'Micro', full: 'Full' };

@@ -113,6 +113,21 @@ const SCRIPT_REPLACEMENTS = [
     "        row.again.firstChild.replaceChildren(head, ...Object.keys(levels).filter((k) => k !== job.SummaryLevel).map((k) => {\n" +
     "          const o = document.createElement('option'); o.value = k; o.textContent = levels[k].label; return o; }));\n" +
     "      }"],
+  // Read marks (remote-extras.js markRead): a read tile is dimmed and says "✓ Read <date>",
+  // with "Mark unread" to undo.
+  ["      row.state.textContent = job.State + (job.WatchLater ? ' · Watch later' : '');",
+    "      row.state.textContent = job.State + (job.WatchLater ? ' · Watch later' : '');\n" +
+    "      if (!row.read) {\n" +
+    "        row.read = document.createElement('span'); row.read.className = 'read-badge';\n" +
+    "        const label = document.createElement('span'); const undo = document.createElement('button');\n" +
+    "        undo.type = 'button'; undo.className = 'read-undo'; undo.textContent = 'Mark unread';\n" +
+    "        undo.addEventListener('click', () => window.ytMarkRead && window.ytMarkRead(row.readJobId, false));\n" +
+    "        row.read.append(label, undo); row.state.before(row.read);\n" +
+    "      }\n" +
+    "      row.readJobId = job.Id;\n" +
+    "      row.read.hidden = !job.ReadAt;\n" +
+    "      if (job.ReadAt) row.read.firstChild.textContent = '✓ Read ' + new Date(job.ReadAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });\n" +
+    "      row.element.classList.toggle('is-read', !!job.ReadAt);"],
   // Search also matches the channel/playlist name.
   ["const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''}`.toLowerCase();",
     "const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''} ${job.SourceTitle || ''}`.toLowerCase();"],

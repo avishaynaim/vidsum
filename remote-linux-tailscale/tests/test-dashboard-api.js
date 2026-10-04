@@ -693,6 +693,22 @@ async function testResummarize() {
   assert.strictEqual([a, b].filter((j) => scheduler.running.has(j.Id)).length, 1);
 }
 
+// Read marks: set and cleared through the API, kept on the job, and they do not change
+// UpdatedAt (a list sorted by last update must not move the tile you just read).
+async function testReadMarks() {
+  const { scheduler, dir } = makeScheduler();
+  const job = await add(scheduler, 'MMMMMMMMMMM');
+  const updated = job.UpdatedAt;
+  await new Promise((r) => setTimeout(r, 5));
+  const marked = await handleApi(scheduler, 'POST', '/api/mark-read', { jobId: job.Id });
+  assert.ok(marked.ReadAt);
+  assert.strictEqual(job.UpdatedAt, updated, 'reading does not count as an update');
+  const onDisk = JSON.parse(require('fs').readFileSync(require('path').join(dir, `${job.Id}.json`), 'utf8'));
+  assert.strictEqual(onDisk.ReadAt, marked.ReadAt, 'saved, so every device sees it');
+  await handleApi(scheduler, 'POST', '/api/mark-read', { jobId: job.Id, read: false });
+  assert.strictEqual(job.ReadAt, null);
+}
+
 // Torah / regular dashboards: one queue, but each sees and acts on only its own videos,
 // channels and searches; jobs from before the split belong to the Torah one.
 async function testSpaces() {
@@ -736,6 +752,7 @@ module.exports = async function run() {
   await testRateLimitWait();
   await testWhisperBusy();
   await testResummarize();
+  await testReadMarks();
 };
 
 if (require.main === module) {

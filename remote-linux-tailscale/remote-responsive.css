@@ -244,3 +244,13 @@ mark.search-hit.current { background: #ff9f1c; outline: 2px solid #fff; }
 /* "Summarize again at another level" on a finished tile (keeps the existing summary). */
 .job-card .again-level { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .job-card .again-level[hidden] { display: none; }
+
+/* Read marks: a video whose summary was opened is dimmed and labelled, so it is not opened
+   twice by accident; still fully usable (tap to read again). */
+.job-card.is-read { opacity: .55; filter: saturate(.4); border-color: var(--line-soft) !important; }
+.job-card.is-read:hover, .job-card.is-read:focus-within { opacity: .9; filter: none; }
+.job-card .read-badge { display: inline-flex; align-items: center; gap: 6px; margin-inline-end: 6px; font-size: 12px;
+  font-weight: 700; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 4px 1px 9px; }
+.job-card .read-badge[hidden] { display: none; }
+.job-card .read-badge .read-undo { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; }
+body.hide-read .job-card.is-read { display: none; }
