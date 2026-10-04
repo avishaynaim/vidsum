@@ -94,8 +94,8 @@
         "button[aria-label=\"Submit\"]",
         "button[type=\"submit\"]"
       ],
-      "assistantMessageSelector": "div.items-start .message-bubble",
-      "assistantTextSelector": ".message-bubble",
+      "assistantMessageSelector": "div.items-start .message-bubble:has(.response-content-markdown)",
+      "assistantTextSelector": ".response-content-markdown",
       "errorSelector": "[data-testid*=\"error\"]",
       "stopSelectors": [
         "button[aria-label*=\"Stop\"]"
