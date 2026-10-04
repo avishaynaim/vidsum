@@ -48,6 +48,7 @@
 .job-card[data-job-id]:hover { border-color: var(--accent); }
 #summary-viewer {
   width: min(1100px, 94vw); max-height: 92vh; height: 92vh; padding: 0;
+  max-height: 92dvh; height: 92dvh; /* phones: vh includes the hidden browser bar, which pushed the bottom bar off screen */
   background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius);
 }
 #summary-viewer[open] { display: flex; flex-direction: column; }

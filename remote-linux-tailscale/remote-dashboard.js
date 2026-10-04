@@ -134,6 +134,10 @@ const SCRIPT_REPLACEMENTS = [
   // The tile's class list is rebuilt here on every render, so the read mark must be part of it.
   ["          (hasTranscript ? ' has-saved-transcript' : '');",
     "          (hasTranscript ? ' has-saved-transcript' : '') + (job.ReadAt ? ' is-read' : '');"],
+  // "Open summary" opens the summary viewer (auto-scroll, Back closes it, read mark) instead of
+  // the plain text box further down the page.
+  ["            await openLocalResult(job.Id);",
+    "            if (window.ytOpenViewer) window.ytOpenViewer(job.Id); else await openLocalResult(job.Id);"],
   // Search also matches the channel/playlist name.
   ["const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''}`.toLowerCase();",
     "const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''} ${job.SourceTitle || ''}`.toLowerCase();"],
