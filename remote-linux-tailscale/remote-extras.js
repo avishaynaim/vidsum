@@ -396,6 +396,52 @@
     return section;
   }
 
+  // "📜 Full transcript": everything said in the video, loaded when the section is opened
+  // (the server may fetch it from YouTube once). "Clean version" makes a Full-level job, where
+  // the AI adds punctuation, paragraphs and niqqud.
+  function transcriptBlock(jobId, level) {
+    const body = el('div', { className: 'viewer-text', dir: 'auto' }, el('p', { className: 'muted' }, 'Loading the transcript…'));
+    const copy = el('button', { type: 'button', hidden: true }, 'Copy');
+    const clean = el('button', { type: 'button', title: 'A new job at the Full level: the transcript with punctuation, paragraphs and niqqud added by the AI' }, 'Clean version');
+    if (level === 'full') clean.hidden = true;
+    const heading = el('summary', {}, el('b', {}, '📜 Full transcript'), el('span', { className: 'muted' }, ' · word for word'),
+      el('span', { className: 'viewer-actions' }, copy, clean));
+    const section = el('details', { className: 'viewer-section viewer-transcript' }, heading, body);
+    section.dataset.key = 'transcript';
+    let text = null;
+    section.addEventListener('toggle', async () => {
+      if (!section.open || text !== null) return;
+      text = '';
+      try {
+        const t = await post('/api/transcript', { jobId });
+        text = t.text;
+        // One long caption string reads badly: break it into paragraphs of a few sentences.
+        const sentences = text.replace(/\s+/g, ' ').split(/(?<=[.!?:])\s+/);
+        const paragraphs = [];
+        for (let i = 0; i < sentences.length; i += 4) paragraphs.push(sentences.slice(i, i + 4).join(' '));
+        body.replaceChildren(...paragraphs.map((p) => el('p', {}, p)));
+        copy.hidden = false;
+      } catch (error) {
+        text = null; // try again on the next open
+        body.replaceChildren(el('p', { className: 'muted' }, error.message));
+      }
+    });
+    copy.addEventListener('click', async (event) => {
+      event.preventDefault();
+      try { await navigator.clipboard.writeText(text || ''); copy.textContent = 'Copied'; } catch { copy.textContent = 'Copy failed'; }
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+    });
+    clean.addEventListener('click', async (event) => {
+      event.preventDefault();
+      clean.disabled = true;
+      try {
+        const made = await post('/api/resummarize', { jobId, summaryLevel: 'full' });
+        clean.textContent = made.alreadyExisted ? 'Already in the list' : 'Added to the list ✓';
+      } catch (error) { clean.textContent = 'Failed'; alert(error.message); }
+    });
+    return section;
+  }
+
   // focus (from search): { ranges: { sectionKey: [[s, e]...] }, key, hit } scrolls to one match.
   async function openViewer(jobId, focus = null) {
     viewerTitle.textContent = 'Loading…';
@@ -424,6 +470,7 @@
       });
       if (!blocks.length) blocks.push(el('p', { className: 'muted' }, `No summary yet. ${d.message || ''}`));
       else if (!d.final) blocks.unshift(el('p', { className: 'muted' }, `Still working: ${d.message || ''} Parts finished so far are below.`));
+      blocks.push(transcriptBlock(jobId, d.level));
       viewerBody.replaceChildren(...blocks);
       viewerBody.scrollTop = 0;
       if (focus && focus.key) {

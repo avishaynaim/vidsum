@@ -713,6 +713,19 @@ async function testReadMarks() {
   assert.strictEqual(job.ReadAt, null);
 }
 
+// "📜 Full transcript": the scheduler hands back the video's transcript, and a failure is a
+// clear 502 message (not a crash).
+async function testTranscript() {
+  const store = new JobStore(tmpDir());
+  let fail = false;
+  const scheduler = new Scheduler({ store, runner: controllableRunner().runner, fetchTitle: async () => '',
+    getTranscript: async (videoId) => { if (fail) throw new Error('YouTube said no'); return { text: `words of ${videoId}`, source: 'saved' }; } });
+  const job = await add(scheduler, 'XXXXXXXXXXX');
+  assert.deepStrictEqual(await handleApi(scheduler, 'POST', '/api/transcript', { jobId: job.Id }), { text: 'words of XXXXXXXXXXX', source: 'saved' });
+  fail = true;
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/transcript', { jobId: job.Id }), (e) => e.status === 502 && /YouTube said no/.test(e.message));
+}
+
 // Torah / regular dashboards: one queue, but each sees and acts on only its own videos,
 // channels and searches; jobs from before the split belong to the Torah one.
 async function testSpaces() {
@@ -757,6 +770,7 @@ module.exports = async function run() {
   await testWhisperBusy();
   await testResummarize();
   await testReadMarks();
+  await testTranscript();
 };
 
 if (require.main === module) {

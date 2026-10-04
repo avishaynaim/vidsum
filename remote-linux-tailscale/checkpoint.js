@@ -92,7 +92,8 @@ function clearCheckpoint(videoId) {
 
 // Privately caches the fetched transcript beside the checkpoint so a restart resumes
 // without re-fetching it (mirrors the Windows engine's per-video split-transcript cache).
-// Deleted on completion or when the user clears progress - never kept beyond that.
+// Kept after completion (another summary level, the viewer's "Full transcript"); deleted when
+// the user clears progress.
 function saveTranscriptCache(videoId, text) {
   ensureDir(CHECKPOINT_DIR);
   const target = transcriptCachePath(videoId);

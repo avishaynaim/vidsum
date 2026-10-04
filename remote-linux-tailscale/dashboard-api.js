@@ -265,11 +265,28 @@ async function fetchOEmbedTitle(videoId) {
   }
 }
 
+// Saved transcript first (checkpoint cache, then ~/apps/yt-transcript's cache), else fetched
+// from YouTube once (captions, or the audio transcription for a video without them) and saved.
+async function defaultGetTranscript(videoId) {
+  const checkpoint = require('./checkpoint');
+  const saved = checkpoint.loadTranscriptCache(videoId);
+  if (saved) return { text: saved, source: 'saved' };
+  try {
+    const cached = JSON.parse(fs.readFileSync(path.join(require('os').homedir(), '.cache', 'yt-transcript', `${videoId}.json`), 'utf8'));
+    if (cached && cached.text) { checkpoint.saveTranscriptCache(videoId, cached.text); return { text: cached.text, source: 'saved' }; }
+  } catch { /* not there */ }
+  const fetched = await require('./transcript').fetchTranscript(videoId);
+  checkpoint.saveTranscriptCache(videoId, fetched.text);
+  return { text: fetched.text, source: 'fetched' };
+}
+
 class Scheduler {
   constructor({ store, runner, fetchTitle = fetchOEmbedTitle, browserReady = async () => true, attachRunner = null, log = () => {},
     listVideos = (url, options) => require('./import-list').listVideos(url, options),
     recycleBrowser = null, memoryAvailable = memAvailableMB,
-    loadCheckpoint = (videoId) => require('./checkpoint').loadCheckpoint(videoId) }) {
+    loadCheckpoint = (videoId) => require('./checkpoint').loadCheckpoint(videoId),
+    getTranscript = defaultGetTranscript }) {
+    this.getTranscript = getTranscript;
     this.loadCheckpoint = loadCheckpoint;
     this.listVideos = listVideos;
     this.recycleBrowser = recycleBrowser;
@@ -939,6 +956,16 @@ class Scheduler {
   }
 
   // Everything the tile viewer shows: the final summary (if done) and every finished part.
+  // The whole transcript of a video, for "📜 Full transcript" in the summary viewer.
+  async transcript(id) {
+    const job = this.find(id);
+    try {
+      return await this.getTranscript(job.VideoId);
+    } catch (err) {
+      throw new ApiError(502, `Could not get the transcript: ${err.message}`);
+    }
+  }
+
   // Read marks: opening a summary marks its video read (ReadAt), so a long list of finished
   // videos shows which were already read. Kept on the server: the same on every device.
   markRead(id, read = true) {
@@ -1114,6 +1141,7 @@ async function handleApi(scheduler, method, pathname, body, space = null) {
     case '/api/watch-later': scheduler.setWatchLater(body.jobId, body.watchLater); return { updated: true };
     case '/api/set-job-level': scheduler.setLevel(body.jobId, body.summaryLevel); return { updated: true };
     case '/api/resummarize': return scheduler.resummarize(body.jobId, body.summaryLevel);
+    case '/api/transcript': return scheduler.transcript(body.jobId);
     case '/api/mark-read': return scheduler.markRead(body.jobId, body.read === undefined ? true : body.read);
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
     case '/api/details': return scheduler.details(body.jobId);
