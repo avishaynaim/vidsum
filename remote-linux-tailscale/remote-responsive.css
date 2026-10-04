@@ -80,7 +80,7 @@
 #summary-viewer .viewer-rail-label {
   position: absolute; right: 30px; transform: translateY(-50%); pointer-events: none;
   background: var(--panel-2); border: 1px solid var(--accent); color: var(--text);
-  border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; white-space: nowrap;
+  border-radius: 999px; padding: 2px 7px; font-size: 12px; font-weight: 700; white-space: nowrap;
   opacity: 0; transition: opacity .25s ease;
 }
 #summary-viewer .viewer-rail-label.visible { opacity: 1; }

@@ -256,13 +256,8 @@
     const top = Math.round((track - thumb) * (scrollTop / scrollable));
     railThumb.style.height = `${thumb}px`;
     railThumb.style.transform = `translateY(${top}px)`;
-    // The section under the top of the view names the location.
-    const viewTop = viewerBody.getBoundingClientRect().top + 12;
-    const sections = [...viewerBody.querySelectorAll('.viewer-section')];
-    const current = sections.filter((section) => section.getBoundingClientRect().top <= viewTop).pop() || sections[0];
-    const name = current ? current.querySelector('summary b')?.textContent : '';
     const percent = Math.round(100 * scrollTop / scrollable);
-    railLabel.textContent = name ? `${name} · ${percent}%` : `${percent}%`;
+    railLabel.textContent = `${percent}%`; // just the number: a section name covered the text
     railLabel.style.top = `${rail.offsetTop + top + thumb / 2}px`;
     railLabel.hidden = false;
     railLabel.classList.add('visible');
