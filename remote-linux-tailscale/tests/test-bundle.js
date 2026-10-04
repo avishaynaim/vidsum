@@ -202,3 +202,14 @@ testDashboard()
   assert.ok(m, 'server.js defines SIGNED_IN_CHECK');
   new Function(`return ${eval(m[1])}`); // and it is valid page JavaScript
 }
+
+// Over Tailscale the dashboard is plain http, where browsers have no crypto.randomUUID; the page
+// defines it (from getRandomValues) before app.js, which needs it to add videos.
+{
+  const html = require('../remote-dashboard').buildDashboard({ space: 'torah' }).html;
+  const m = /<script>(if\(window\.crypto&&!crypto\.randomUUID\)[^<]*)<\/script>/.exec(html);
+  assert.ok(m && html.indexOf(m[0]) < html.indexOf('<script src="/app.js"'), 'randomUUID polyfill comes before app.js');
+  const fake = { getRandomValues: (a) => require('crypto').getRandomValues(a) };
+  new Function('window', 'crypto', m[1])({ crypto: fake }, fake);
+  assert.match(fake.randomUUID(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+}
