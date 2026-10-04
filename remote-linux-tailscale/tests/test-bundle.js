@@ -193,3 +193,12 @@ testDashboard()
     console.error(error.stack || error.message);
     process.exit(1);
   });
+
+// The login check's page expression must exist: without it every check threw, each login tab
+// was closed as "hung" and the dashboard said "Checking logins..." forever (Sept 30 - Oct 4).
+{
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8');
+  const m = /const SIGNED_IN_CHECK = (`[\s\S]*?`);/.exec(src);
+  assert.ok(m, 'server.js defines SIGNED_IN_CHECK');
+  new Function(`return ${eval(m[1])}`); // and it is valid page JavaScript
+}

@@ -178,6 +178,18 @@ async function openSignInTabs() {
   return withLoginTabs(async () => (await ensureLoginTabs()).opened);
 }
 
+// Runs in a provider's tab: 'loading', 'signed-out' (a login page or a visible "Log in" /
+// "Sign in" / "Sign up" button) or 'signed-in'. (Restored: it went missing in ede1da9, so every
+// check threw, the tab was closed as "hung" and the dashboard said "Checking logins..." forever.)
+const SIGNED_IN_CHECK = `(() => {
+  if (document.readyState !== 'complete') return 'loading';
+  if (/^\\/(login|auth|signin)/i.test(location.pathname)) return 'signed-out';
+  const labels = [...document.querySelectorAll('a,button')]
+    .filter((el) => el.offsetParent !== null)
+    .map((el) => el.innerText.trim().toLowerCase());
+  return labels.some((t) => t === 'log in' || t === 'sign in' || t === 'sign up') ? 'signed-out' : 'signed-in';
+})()`;
+
 async function signInStatus() {
   return withLoginTabs(async () => {
     const cdp = require('./cdp');
