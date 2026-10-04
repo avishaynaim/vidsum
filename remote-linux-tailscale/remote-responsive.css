@@ -335,3 +335,12 @@ body.hide-read .job-card.is-read { display: none; }
   #summary-viewer .autoscroll-speed { min-width: 1.4em; }
   #summary-viewer .lbl { display: none; }
 }
+
+/* Select finished videos, then open each in its own tab. */
+.select-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 4px; }
+.select-bar label { display: inline-flex; align-items: center; gap: 6px; font-weight: 650; }
+.select-bar .sel-count { color: var(--muted); font-size: 13px; font-weight: 700; }
+.select-bar .sel-open:not(:disabled) { background: var(--accent); color: #0b111a; border-color: var(--accent); font-weight: 750; }
+.sel-note { margin: 4px 0 8px; color: var(--warn, #fbbf24) !important; }
+.job-card .tile-pick { width: 20px; height: 20px; margin: 0 8px 0 0; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
+.job-card .tile-pick[hidden] { display: none; }

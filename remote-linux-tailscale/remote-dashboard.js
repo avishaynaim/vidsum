@@ -159,6 +159,18 @@ const SCRIPT_REPLACEMENTS = [
     "    title: (left, right) => (left.Title || left.VideoId).localeCompare(right.Title || right.VideoId),\n" +
     "    read: (left, right) => (jobSortTime(right.ReadAt) - jobSortTime(left.ReadAt)) ||\n" +
     "      (jobSortTime(right.CreatedAt) - jobSortTime(left.CreatedAt)) || String(left.VideoId).localeCompare(String(right.VideoId))\n  };"],
+  // Selection checkbox on each finished tile (remote-extras.js: select all, open in tabs).
+  ["      row.state.textContent = job.State + (job.WatchLater ? ' · Watch later' : '');",
+    "      row.state.textContent = job.State + (job.WatchLater ? ' · Watch later' : '');\n" +
+    "      if (!row.pick) {\n" +
+    "        row.pick = document.createElement('input'); row.pick.type = 'checkbox'; row.pick.className = 'tile-pick';\n" +
+    "        row.pick.title = 'Select (then Open in tabs, above the list)';\n" +
+    "        row.pick.addEventListener('change', () => window.ytSelect && window.ytSelect(row.pickJobId, row.pick.checked));\n" +
+    "        row.state.parentNode.prepend(row.pick);\n" +
+    "      }\n" +
+    "      row.pickJobId = job.Id;\n" +
+    "      row.pick.hidden = job.State !== 'completed';\n" +
+    "      row.pick.checked = !!(window.ytSelected && window.ytSelected.has(job.Id));"],
   // Search also matches the channel/playlist name.
   ["const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''}`.toLowerCase();",
     "const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''} ${job.SourceTitle || ''}`.toLowerCase();"],

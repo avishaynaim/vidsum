@@ -717,6 +717,53 @@
     setTimeout(() => { retryFailed.disabled = false; refreshFailed(); }, 4000);
   });
 
+  // ---- Select several finished videos and open each summary in its own tab. ----
+  // Browsers allow one new tab per click and block the rest as pop-ups until the site is
+  // allowed ("Always allow pop-ups"); blocked tabs are counted and explained.
+  const selected = new Set();
+  window.ytSelected = selected;
+  const selectAll = el('input', { type: 'checkbox', id: 'select-all-shown' });
+  const selCount = el('span', { className: 'sel-count' });
+  const openTabs = el('button', { type: 'button', className: 'sel-open' }, 'Open in tabs');
+  const clearSel = el('button', { type: 'button' }, 'Clear');
+  const selNote = el('p', { className: 'muted sel-note', hidden: true });
+  const selBar = el('div', { className: 'select-bar' },
+    el('label', { title: 'Select every finished video the filters show' }, selectAll, ' Select all'), selCount, openTabs, clearSel);
+  const shownPicks = () => [...document.querySelectorAll('.job-card .tile-pick')].filter((b) => !b.hidden);
+  function refreshSelection() {
+    for (const box of shownPicks()) { const id = box.closest('.job-card').dataset.jobId; box.checked = selected.has(id); }
+    const shown = shownPicks();
+    const on = shown.filter((b) => b.checked).length;
+    selectAll.checked = shown.length > 0 && on === shown.length;
+    selectAll.indeterminate = on > 0 && on < shown.length;
+    selCount.textContent = selected.size ? `${selected.size} selected` : '';
+    openTabs.disabled = clearSel.disabled = selected.size === 0;
+    openTabs.textContent = selected.size > 1 ? `Open ${selected.size} in tabs` : 'Open in tabs';
+  }
+  window.ytSelect = (jobId, on) => { if (on) selected.add(jobId); else selected.delete(jobId); refreshSelection(); };
+  selectAll.addEventListener('change', () => {
+    for (const box of shownPicks()) { const id = box.closest('.job-card').dataset.jobId; if (selectAll.checked) selected.add(id); else selected.delete(id); }
+    refreshSelection();
+  });
+  clearSel.addEventListener('click', () => { selected.clear(); selNote.hidden = true; refreshSelection(); });
+  openTabs.addEventListener('click', () => {
+    const ids = [...selected];
+    let blocked = 0;
+    for (const id of ids) if (!window.open(`${location.pathname}#summary=${id}`, '_blank')) blocked++;
+    selNote.hidden = !blocked;
+    if (blocked) {
+      selNote.textContent = `The browser blocked ${blocked} of ${ids.length} tabs. Tap the blocked pop-up icon in the address bar, ` +
+        'choose "Always allow pop-ups" for this site, then press Open in tabs again.';
+    } else {
+      selected.clear();
+    }
+    refreshSelection();
+  });
+  const filtersBox = document.getElementById('length-filters') || document.getElementById('status-filters');
+  if (filtersBox) filtersBox.after(selBar, selNote);
+  refreshSelection();
+  setInterval(refreshSelection, 2000); // the list re-renders; keep "select all" in step with what is shown
+
   // Ctrl/⌘+click or middle-click on a tile (or its "Open summary") opens that summary in a new
   // tab, so several can be opened one after another; a plain click still opens it here.
   const summaryUrl = (jobId) => `${location.pathname}#summary=${jobId}`;
