@@ -289,3 +289,13 @@ body.hide-read .job-card.is-read { display: none; }
   background: var(--mint); box-shadow: 0 0 0 6px rgba(94, 234, 212, .25); transition: top .5s ease; }
 /* The camera picture is only read, never shown (kept in the page for Android). */
 #summary-viewer .eye-video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+#summary-viewer .eye-cal-dot.glide { transition: none; }
+/* ⚙ Fine-tune panel, over the lower part of the text so the marker stays visible above it. */
+#summary-viewer .eye-tune { position: absolute; left: 8px; right: 8px; bottom: 70px; z-index: 9; background: var(--panel-2);
+  border: 1px solid var(--accent); border-radius: 14px; padding: 10px 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, .5); }
+#summary-viewer .eye-tune p { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); }
+#summary-viewer .eye-tune label { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; align-items: center; font-size: 13px; margin: 4px 0; }
+#summary-viewer .eye-tune label input { grid-column: 1 / -1; width: 100%; }
+#summary-viewer .eye-tune label b { grid-row: 1; grid-column: 2; font-size: 12.5px; }
+#summary-viewer .eye-tune-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+#summary-viewer .eye-tune-done { background: var(--accent); color: #0b111a; border-color: var(--accent); font-weight: 750; }
