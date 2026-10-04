@@ -25,18 +25,48 @@ const T = {
   page: 0.88,           // part of a screen to move per page turn
 };
 
+// Every step and error goes to the server log as well (journalctl --user -u yt-summary),
+// since a phone's console cannot be seen from there.
+function report(message) {
+  const key = sessionStorage.getItem('yt-summary-token') || localStorage.getItem('yt-summary-token') || '';
+  fetch('/api/client-log', { method: 'POST', headers: { 'X-YT-Token': key }, body: `eye: ${message}` }).catch(() => {});
+}
+
+// A step that does not finish in time fails with a message saying which step it was.
+function within(ms, label, promise) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} took too long (over ${Math.round(ms / 1000)} s)`)), ms);
+  })]).finally(() => clearTimeout(timer));
+}
+
 let landmarkerPromise = null;
-function loadLandmarker() {
+function loadLandmarker(status) {
   landmarkerPromise ??= (async () => {
-    const { FaceLandmarker, FilesetResolver } = await import(`${MP}/vision_bundle.mjs`);
-    const files = await FilesetResolver.forVisionTasks(`${MP}/wasm`);
+    status('Loading engine…');
+    const t0 = performance.now();
+    const { FaceLandmarker, FilesetResolver } = await within(120000, 'Downloading the engine', import(`${MP}/vision_bundle.mjs`));
+    const files = await within(120000, 'Downloading the engine', FilesetResolver.forVisionTasks(`${MP}/wasm`));
+    report(`engine ready in ${Math.round(performance.now() - t0)} ms`);
     const options = (delegate) => ({
       baseOptions: { modelAssetPath: `${MP}/face_landmarker.task`, delegate },
       runningMode: 'VIDEO', numFaces: 1,
       outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true,
     });
-    try { return await FaceLandmarker.createFromOptions(files, options('GPU')); }
-    catch { return FaceLandmarker.createFromOptions(files, options('CPU')); }
+    // The phone's graphics chip is faster, but on some Android phones it stalls instead of
+    // failing; then the CPU, which always works.
+    status('Loading face model…');
+    try {
+      const lm = await within(30000, 'Starting on the graphics chip', FaceLandmarker.createFromOptions(files, options('GPU')));
+      report(`face model ready on GPU in ${Math.round(performance.now() - t0)} ms`);
+      return lm;
+    } catch (error) {
+      report(`GPU failed (${error.message}); trying CPU`);
+      status('Loading face model (CPU)…');
+      const lm = await within(120000, 'Loading the face model', FaceLandmarker.createFromOptions(files, options('CPU')));
+      report(`face model ready on CPU in ${Math.round(performance.now() - t0)} ms`);
+      return lm;
+    }
   })();
   landmarkerPromise.catch(() => { landmarkerPromise = null; });
   return landmarkerPromise;
@@ -82,14 +112,38 @@ export async function start({ viewer, body, bar, button, setLookingAway, onStop 
   if (!window.isSecureContext || !navigator.mediaDevices) {
     throw new Error('The camera only works on the https link. Open the dashboard at https://YOUR-MACHINE.YOUR-TAILNET.ts.net:8443 and try again.');
   }
-  button.textContent = '👁 Loading…';
-  const [stream, landmarker] = await Promise.all([
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } }, audio: false }),
-    loadLandmarker(),
-  ]);
-  const video = el('video', { muted: true, playsInline: true, autoplay: true });
-  video.srcObject = stream;
-  await video.play();
+  const status = (text) => { button.textContent = `👁 ${text}`; };
+  report(`start on ${navigator.userAgent}`);
+  let stream = null, video = null;
+  try {
+    status('Starting camera…');
+    stream = await within(20000, 'Starting the camera', navigator.mediaDevices.getUserMedia(
+      { video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } }, audio: false }));
+    // Some Android versions only deliver frames to a video element that is in the page.
+    video = el('video', { muted: true, playsInline: true, autoplay: true, className: 'eye-video' });
+    video.setAttribute('playsinline', '');
+    video.srcObject = stream;
+    viewer.append(video);
+    video.play().catch(() => {});
+    await within(15000, 'Getting the first camera picture', new Promise((resolve) => {
+      if (video.readyState >= 2) resolve(); else video.addEventListener('loadeddata', resolve, { once: true });
+    }));
+    report(`camera ${video.videoWidth}x${video.videoHeight}`);
+  } catch (error) {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (video) video.remove();
+    report(`camera failed: ${error.name || ''} ${error.message}`);
+    throw new Error(`Camera: ${error.message}`);
+  }
+  let landmarker;
+  try {
+    landmarker = await loadLandmarker(status);
+  } catch (error) {
+    stream.getTracks().forEach((t) => t.stop());
+    video.remove();
+    report(`engine failed: ${error.message}`);
+    throw new Error(`Eye tracking could not start: ${error.message}`);
+  }
 
   // UI: status dot in the bar (gray no face, green face, blue armed), a gaze marker on the
   // left edge of the text, and a recalibrate button.
@@ -170,6 +224,7 @@ export async function start({ viewer, body, bar, button, setLookingAway, onStop 
         collecting = null;
       }
     } finally { collecting = null; overlay.remove(); }
+    report(`calibration: ${samples.length} samples`);
     if (samples.length < 12) throw new Error('Your face was not seen well enough. Hold the phone in front of you, in good light, and try again.');
     cal = fit(samples);
     try { localStorage.setItem(CAL_KEY, JSON.stringify(cal)); } catch {}
@@ -180,7 +235,7 @@ export async function start({ viewer, body, bar, button, setLookingAway, onStop 
     stopped = true;
     cancelAnimationFrame(raf);
     stream.getTracks().forEach((t) => t.stop());
-    dot.remove(); recal.remove(); marker.remove();
+    video.remove(); dot.remove(); recal.remove(); marker.remove();
     button.textContent = '👁 Eyes';
     button.classList.remove('on');
     if (away) setLookingAway(false);

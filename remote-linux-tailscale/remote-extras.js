@@ -266,6 +266,7 @@
         onStop: () => { eyeSession = null; heldByEyes = false; if (playing && !heldByTouch) kick(); },
       });
     } catch (error) {
+      eyeButton.textContent = '👁 Eyes';
       alert(error.message);
     } finally {
       eyeButton.disabled = false;

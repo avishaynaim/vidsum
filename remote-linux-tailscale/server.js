@@ -441,9 +441,10 @@ function createServer({
         if (!fs.existsSync(file)) { sendJson(res, 404, { error: 'MediaPipe is not installed on the server (run fetch-mediapipe.sh).' }); return; }
         const type = url.pathname.endsWith('.wasm') ? 'application/wasm'
           : url.pathname.endsWith('.task') ? 'application/octet-stream' : 'application/javascript; charset=utf-8';
-        const body = fs.readFileSync(file);
+        const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '') && fs.existsSync(`${file}.gz`);
+        const body = fs.readFileSync(gz ? `${file}.gz` : file);
         res.writeHead(200, { 'Content-Type': type, 'Content-Length': body.length, 'Cache-Control': 'public, max-age=2592000, immutable',
-          'X-Content-Type-Options': 'nosniff' });
+          'X-Content-Type-Options': 'nosniff', Vary: 'Accept-Encoding', ...(gz ? { 'Content-Encoding': 'gzip' } : {}) });
         res.end(body);
         return;
       }
@@ -479,6 +480,15 @@ function createServer({
       }
 
       if (url.pathname.startsWith('/thumb/') && req.method === 'GET' && await handleThumb(thumbs, url, res)) return;
+
+      // The phone's eye page-turn reports its steps and errors here, so a problem on the phone
+      // shows up in this server's log (journalctl --user -u yt-summary).
+      if (url.pathname === '/api/client-log' && req.method === 'POST') {
+        const text = String((await readBody(req, 4096)) || '').replace(/[\r\n]+/g, ' ').slice(0, 600);
+        log(`[phone] ${text}`);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
 
       if (url.pathname.startsWith('/api/')) {
         let body = null;

@@ -248,8 +248,11 @@ mark.search-hit.current { background: #ff9f1c; outline: 2px solid #fff; }
 
 /* Read marks: a video whose summary was opened is dimmed and labelled, so it is not opened
    twice by accident; still fully usable (tap to read again). */
-.job-card.is-read { opacity: .55; filter: saturate(.4); border-color: var(--line-soft) !important; }
-.job-card.is-read:hover, .job-card.is-read:focus-within { opacity: .9; filter: none; }
+/* Only the tile's text and pictures fade; its buttons stay at full strength (a fully dimmed
+   tile made "Open summary" look disabled). */
+.job-card.is-read { border-color: var(--line-soft) !important; }
+.job-card.is-read > :not(.job-card-actions) { opacity: .5; filter: saturate(.35); }
+.job-card.is-read:hover > :not(.job-card-actions), .job-card.is-read:focus-within > :not(.job-card-actions) { opacity: .85; filter: none; }
 .job-card .read-badge { display: inline-flex; align-items: center; margin-inline-end: 6px; font-size: 12px;
   font-weight: 700; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; }
 .job-card .read-badge[hidden] { display: none; }
@@ -284,3 +287,5 @@ body.hide-read .job-card.is-read { display: none; }
 #summary-viewer .eye-cal p { position: absolute; left: 0; right: 0; top: 30%; text-align: center; font-weight: 700; color: var(--text); }
 #summary-viewer .eye-cal-dot { position: absolute; left: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%;
   background: var(--mint); box-shadow: 0 0 0 6px rgba(94, 234, 212, .25); transition: top .5s ease; }
+/* The camera picture is only read, never shown (kept in the page for Android). */
+#summary-viewer .eye-video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }

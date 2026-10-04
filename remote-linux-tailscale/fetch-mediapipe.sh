@@ -15,4 +15,6 @@ cp "$TMP/package/LICENSE" "$DIR/" 2>/dev/null || true
 rm -rf "$TMP"
 curl -fsSL -o "$DIR/face_landmarker.task" \
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+# Pre-compressed copies: the phone downloads ~7 MB instead of ~16 MB over the box's LTE uplink.
+for f in "$DIR/vision_bundle.mjs" "$DIR/face_landmarker.task" "$DIR"/wasm/*.js "$DIR"/wasm/*.wasm; do gzip -9 -k -f "$f"; done
 echo "MediaPipe $VERSION ready in $DIR"
