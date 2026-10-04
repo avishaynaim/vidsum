@@ -749,6 +749,7 @@
     const card = document.querySelector(`.job-card[data-job-id="${jobId}"]`);
     const was = card ? card.classList.contains('is-read') : !read;
     if (card) card.classList.toggle('is-read', read); // at once; the next poll confirms it
+    if (!read) { const i = readUndo.lastIndexOf(jobId); if (i >= 0) readUndo.splice(i, 1); } // already unread: nothing left to undo
     if (!fromUndo && read && !was) {
       readUndo.push(jobId);
       if (readUndo.length > 20) readUndo.shift();
