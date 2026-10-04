@@ -67,6 +67,40 @@
       "stopSelectors": [
         "button[aria-label*=\"Stop\"]"
       ]
+    },
+    "Perplexity": {
+      "url": "https://www.perplexity.ai/",
+      "editorSelectors": [
+        "#ask-input",
+        "[contenteditable=\"true\"][role=\"textbox\"]"
+      ],
+      "sendSelectors": [
+        "button[aria-label=\"Submit\"]"
+      ],
+      "assistantMessageSelector": ".prose",
+      "assistantTextSelector": ".prose",
+      "errorSelector": "[data-testid*=\"error\"]",
+      "stopSelectors": [
+        "button[aria-label*=\"Stop\"]"
+      ]
+    },
+    "Grok": {
+      "url": "https://grok.com/",
+      "editorSelectors": [
+        "textarea[aria-label*=\"Ask Grok\"]",
+        "textarea[placeholder*=\"Ask Grok\"]",
+        "textarea"
+      ],
+      "sendSelectors": [
+        "button[aria-label=\"Submit\"]",
+        "button[type=\"submit\"]"
+      ],
+      "assistantMessageSelector": "div.items-start .message-bubble",
+      "assistantTextSelector": ".message-bubble",
+      "errorSelector": "[data-testid*=\"error\"]",
+      "stopSelectors": [
+        "button[aria-label*=\"Stop\"]"
+      ]
     }
   }
 }
