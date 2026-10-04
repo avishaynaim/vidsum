@@ -87,9 +87,8 @@
     "Grok": {
       "url": "https://grok.com/",
       "editorSelectors": [
-        "textarea[aria-label*=\"Ask Grok\"]",
-        "textarea[placeholder*=\"Ask Grok\"]",
-        "textarea"
+        "[contenteditable=\"true\"][aria-label*=\"Ask Grok\"]",
+        "textarea[aria-label*=\"Ask Grok\"]"
       ],
       "sendSelectors": [
         "button[aria-label=\"Submit\"]",
