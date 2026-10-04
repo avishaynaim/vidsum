@@ -128,6 +128,9 @@ const SCRIPT_REPLACEMENTS = [
     "      row.read.hidden = !job.ReadAt;\n" +
     "      if (job.ReadAt) row.read.firstChild.textContent = '✓ Read ' + new Date(job.ReadAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });\n" +
     "      row.element.classList.toggle('is-read', !!job.ReadAt);"],
+  // The tile's class list is rebuilt here on every render, so the read mark must be part of it.
+  ["          (hasTranscript ? ' has-saved-transcript' : '');",
+    "          (hasTranscript ? ' has-saved-transcript' : '') + (job.ReadAt ? ' is-read' : '');"],
   // Search also matches the channel/playlist name.
   ["const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''}`.toLowerCase();",
     "const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''} ${job.SourceTitle || ''}`.toLowerCase();"],
