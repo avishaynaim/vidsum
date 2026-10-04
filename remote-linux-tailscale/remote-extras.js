@@ -717,6 +717,25 @@
     setTimeout(() => { retryFailed.disabled = false; refreshFailed(); }, 4000);
   });
 
+  // Ctrl/⌘+click or middle-click on a tile (or its "Open summary") opens that summary in a new
+  // tab, so several can be opened one after another; a plain click still opens it here.
+  const summaryUrl = (jobId) => `${location.pathname}#summary=${jobId}`;
+  const openInTab = (event) => {
+    const card = event.target.closest('.job-card[data-job-id]');
+    if (!card) return;
+    const control = event.target.closest('button, a, select, input, label, summary, textarea');
+    if (control && !/^\s*Open summary/.test(control.textContent)) return; // other buttons/links keep their own meaning
+    const newTab = event.type === 'auxclick' ? event.button === 1 : (event.ctrlKey || event.metaKey);
+    if (!newTab) return;
+    event.preventDefault();
+    event.stopImmediatePropagation(); // not also in this tab
+    window.open(summaryUrl(card.dataset.jobId), '_blank');
+  };
+  document.addEventListener('click', openInTab, true);
+  document.addEventListener('auxclick', openInTab, true);
+  // Opened from such a link: show that summary right away.
+  if (window.__openSummary) setTimeout(() => openViewer(window.__openSummary), 0);
+
   // Tapping anywhere on a tile except its own buttons/links/menus opens the viewer.
   document.addEventListener('click', (event) => {
     const card = event.target.closest('.job-card[data-job-id]');

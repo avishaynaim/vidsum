@@ -216,7 +216,10 @@ function buildDashboard({ seedToken = null, space = null } = {}) {
   // Browsers only offer crypto.randomUUID on https pages; over Tailscale the page is plain http
   // (http://100.x:8787), where adding a video failed with "crypto.randomUUID is not a function".
   // getRandomValues works on http too, so build the same v4 UUID from it.
-  const uuidPolyfill = '<script>if(window.crypto&&!crypto.randomUUID)crypto.randomUUID=()=>' +
+  // A link to one summary (…/torah#summary=<job id>, used by Ctrl+click on a tile) is read here,
+  // before app.js clears the address; remote-extras.js then opens that summary.
+  const summaryLink = "<script>window.__openSummary=((location.hash.match(/(?:^#|&)summary=([0-9a-f-]{36})/i)||[])[1])||null;</script>\n";
+  const uuidPolyfill = summaryLink + '<script>if(window.crypto&&!crypto.randomUUID)crypto.randomUUID=()=>' +
     "'10000000-1000-4000-8000-100000000000'.replace(/[018]/g,(c)=>(c^crypto.getRandomValues(new Uint8Array(1))[0]&15>>c/4).toString(16));</script>\n";
   if (!page.text.includes('<head>')) page.missing.push('index.html: <head>');
   page.text = page.text.replace('<head>', `<head>\n${uuidPolyfill}`) // first thing on the page
