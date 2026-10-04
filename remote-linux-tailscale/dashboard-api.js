@@ -95,12 +95,6 @@ class JobStore {
     atomicWrite(path.join(this.dir, `${job.Id}.json`), JSON.stringify(job));
   }
 
-  // Saves without touching UpdatedAt: a read mark must not move the tile in a list sorted by
-  // last update (the reader would lose their place).
-  saveQuiet(job) {
-    atomicWrite(path.join(this.dir, `${job.Id}.json`), JSON.stringify(job));
-  }
-
   add(job) {
     job.Sequence = ++this.sequence;
     this.jobs.push(job);
@@ -950,8 +944,11 @@ class Scheduler {
   markRead(id, read = true) {
     if (typeof read !== 'boolean') throw new ApiError(400, 'read must be true or false.');
     const job = this.find(id);
+    const changed = !!job.ReadAt !== read;
     job.ReadAt = read ? (job.ReadAt || now()) : null;
-    this.store.saveQuiet(job);
+    // Read / unread is a status change, so it counts as an update ("Last updated" sort);
+    // opening an already-read summary again changes nothing.
+    if (changed) this.store.save(job);
     return { jobId: job.Id, ReadAt: job.ReadAt };
   }
 

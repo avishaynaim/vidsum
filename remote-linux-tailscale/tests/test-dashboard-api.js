@@ -693,8 +693,8 @@ async function testResummarize() {
   assert.strictEqual([a, b].filter((j) => scheduler.running.has(j.Id)).length, 1);
 }
 
-// Read marks: set and cleared through the API, kept on the job, and they do not change
-// UpdatedAt (a list sorted by last update must not move the tile you just read).
+// Read marks: set and cleared through the API and kept on the job. Read / unread is a status
+// change, so it updates UpdatedAt; opening an already-read summary again does not.
 async function testReadMarks() {
   const { scheduler, dir } = makeScheduler();
   const job = await add(scheduler, 'MMMMMMMMMMM');
@@ -702,7 +702,11 @@ async function testReadMarks() {
   await new Promise((r) => setTimeout(r, 5));
   const marked = await handleApi(scheduler, 'POST', '/api/mark-read', { jobId: job.Id });
   assert.ok(marked.ReadAt);
-  assert.strictEqual(job.UpdatedAt, updated, 'reading does not count as an update');
+  assert.notStrictEqual(job.UpdatedAt, updated, 'reading counts as an update');
+  const afterRead = job.UpdatedAt;
+  await new Promise((r) => setTimeout(r, 5));
+  await handleApi(scheduler, 'POST', '/api/mark-read', { jobId: job.Id });
+  assert.strictEqual(job.UpdatedAt, afterRead, 'reading it again changes nothing');
   const onDisk = JSON.parse(require('fs').readFileSync(require('path').join(dir, `${job.Id}.json`), 'utf8'));
   assert.strictEqual(onDisk.ReadAt, marked.ReadAt, 'saved, so every device sees it');
   await handleApi(scheduler, 'POST', '/api/mark-read', { jobId: job.Id, read: false });

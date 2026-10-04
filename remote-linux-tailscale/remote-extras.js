@@ -730,8 +730,9 @@
 
   // ---- Read marks: a tile whose summary was opened is dimmed with "✓ Read" (app.js render,
   // patched in remote-dashboard.js), so the same summary is not opened twice by accident. ----
-  // Every change is remembered so it can be undone: Ctrl+Z / ⌘Z (outside text boxes), or the
-  // "Undo" in the short note shown after each change (phones have no Ctrl+Z).
+  // Ctrl+Z / ⌘Z (outside text boxes) cancels the last "read" (from reading a summary or the
+  // Mark as read button), back to unread; the note shown when a summary closes has the same
+  // Undo for phones. Only reads are undone, not "Mark as unread".
   const readUndo = [];
   const toast = el('div', { className: 'read-toast', hidden: true });
   document.body.append(toast);
@@ -748,19 +749,21 @@
     const card = document.querySelector(`.job-card[data-job-id="${jobId}"]`);
     const was = card ? card.classList.contains('is-read') : !read;
     if (card) card.classList.toggle('is-read', read); // at once; the next poll confirms it
-    if (!fromUndo && was !== read) {
-      readUndo.push({ jobId, read: was });
+    if (!fromUndo && read && !was) {
+      readUndo.push(jobId);
       if (readUndo.length > 20) readUndo.shift();
-      // Opening a summary marks it read silently; only a deliberate button press shows the note.
-      if (!viewer.open) showToast(read ? 'Marked as read' : 'Marked as unread', true);
+      if (viewer.open) pendingReadNote = true; // shown when the summary closes
+      else showToast('Marked as read', true);
     }
     return post('/api/mark-read', { jobId, read }).catch(() => {});
   }
+  let pendingReadNote = false;
+  viewer.addEventListener('close', () => { if (pendingReadNote) { pendingReadNote = false; showToast('Marked as read', true); } });
   function undoRead() {
-    const last = readUndo.pop();
-    if (!last) { showToast('Nothing to undo', false); return; }
-    markRead(last.jobId, last.read, { fromUndo: true });
-    showToast(last.read ? 'Undone: marked as read again' : 'Undone: marked as unread again', false);
+    const jobId = readUndo.pop();
+    if (!jobId) { showToast('Nothing to undo', false); return; }
+    markRead(jobId, false, { fromUndo: true });
+    showToast('Read cancelled: back to unread', false);
   }
   document.addEventListener('keydown', (event) => {
     if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'z') return;
