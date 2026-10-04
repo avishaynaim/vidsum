@@ -718,8 +718,8 @@
     const card = event.target.closest('.job-card[data-job-id]');
     if (!card) return;
     const control = event.target.closest('button, a, select, input, label, summary, textarea');
-    // The tile's own "Open final summary" / "Open all parts" / "Open summary" also count as read.
-    if (control && /^\s*Open (final summary|all parts|summary)/.test(control.textContent)) markRead(card.dataset.jobId);
+    // "Open summary" and the links into the AI sites (final summary, each part) also count as read.
+    if (control && (/^\s*Open summary/.test(control.textContent) || control.matches('.ai-links a'))) markRead(card.dataset.jobId);
     if (control) return;
     openViewer(card.dataset.jobId);
   });

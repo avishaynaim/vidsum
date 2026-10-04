@@ -299,3 +299,13 @@ body.hide-read .job-card.is-read { display: none; }
 #summary-viewer .eye-tune label b { grid-row: 1; grid-column: 2; font-size: 12.5px; }
 #summary-viewer .eye-tune-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 #summary-viewer .eye-tune-done { background: var(--accent); color: #0b111a; border-color: var(--accent); font-weight: 750; }
+
+/* Links into the AI sites (final summary, parts): a small row at the bottom of the tile. */
+.job-card .ai-links { flex: 1 1 100%; order: 99; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  margin-top: 4px; padding-top: 6px; border-top: 1px dashed var(--line); font-size: 12.5px; }
+.job-card .ai-links:not(:has(> a:not([hidden]), > button:not([hidden]))) { display: none; }
+.job-card .ai-links-label { color: var(--muted); font-weight: 600; }
+.job-card .ai-links > a, .job-card .ai-links > button { padding: 2px 4px; border: 0; background: none; color: var(--accent);
+  font-size: 12.5px; font-weight: 650; text-decoration: none; min-height: 0; }
+.job-card .ai-links > a[hidden], .job-card .ai-links > button[hidden] { display: none; }
+.job-card .ai-links .parts-list { flex: 1 1 100%; }

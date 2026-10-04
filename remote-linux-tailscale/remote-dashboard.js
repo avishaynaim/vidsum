@@ -141,6 +141,16 @@ const SCRIPT_REPLACEMENTS = [
   // the plain text box further down the page.
   ["            await openLocalResult(job.Id);",
     "            if (window.ytOpenViewer) window.ytOpenViewer(job.Id); else await openLocalResult(job.Id);"],
+  // "Open final summary" / "Open all parts" (links into the AI sites) are rarely used: they move
+  // to a small "In the AI site:" row at the bottom of the tile, with the parts list.
+  ["        actions.append(result, openAllParts, localResult, retry, attach, clear, stop, pause, watchLater, levelSelect, removeJob, startNow, partsList);",
+    "        const aiLinks = document.createElement('div'); aiLinks.className = 'ai-links';\n" +
+    "        const aiLabel = document.createElement('span'); aiLabel.className = 'ai-links-label'; aiLabel.textContent = 'In the AI site:';\n" +
+    "        aiLinks.append(aiLabel, result, openAllParts, partsList);\n" +
+    "        actions.append(localResult, retry, attach, clear, stop, pause, watchLater, levelSelect, removeJob, startNow, aiLinks);"],
+  ["        result.textContent = 'Open final summary';", "        result.textContent = 'Final summary ↗';"],
+  ["      row.openAllParts.textContent = `Open all parts (${partResultUrls.length})`;",
+    "      row.openAllParts.textContent = `All parts (${partResultUrls.length}) ▾`;"],
   // Search also matches the channel/playlist name.
   ["const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''}`.toLowerCase();",
     "const searchTextOf = job => `${job.Title || ''} ${job.VideoId || ''} ${job.SourceTitle || ''}`.toLowerCase();"],
