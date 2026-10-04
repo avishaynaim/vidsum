@@ -169,6 +169,7 @@
   try { const saved = localStorage.getItem(SPEED_KEY); const v = Number(saved); if (saved !== null && saved !== '' && Number.isInteger(v) && v >= 0 && v < SPEEDS.length) speedIndex = v; } catch {}
   let playing = false;
   let heldByTouch = false;
+  let heldByEyes = false; // eye-scroll.js: you looked away from the screen
   let resumeTimer = null;
   let frame = null;
   let lastTime = 0;
@@ -187,7 +188,7 @@
 
   function step(time) {
     frame = null;
-    if (!playing || heldByTouch) return;
+    if (!playing || heldByTouch || heldByEyes) return;
     const dt = lastTime ? Math.min(0.25, (time - lastTime) / 1000) : 0; // a slow phone still keeps the speed
     lastTime = time;
     position += SPEEDS[speedIndex] * dt;
@@ -244,6 +245,33 @@
   viewerBody.addEventListener('touchcancel', release, { passive: true });
   viewerBody.addEventListener('wheel', () => { hold(); release(); }, { passive: true });
   viewer.addEventListener('close', () => setPlaying(false));
+
+  // ---- 👁 Eye page-turn (beta): eye-scroll.js, loaded only when switched on. ----
+  const eyeButton = el('button', { type: 'button', className: 'eye-toggle', title: 'Turn the page with your eyes (beta, https link only)' }, '👁 Eyes');
+  autoBar.append(eyeButton);
+  let eyeSession = null;
+  eyeButton.addEventListener('click', async () => {
+    if (eyeSession) { eyeSession.stop(); return; }
+    eyeButton.disabled = true;
+    try {
+      const { start } = await import('/eye-scroll.js');
+      eyeSession = await start({
+        viewer, body: viewerBody, bar: autoBar, button: eyeButton,
+        // Auto-scroll waits while you look away, and continues when you look back.
+        setLookingAway: (away) => {
+          if (heldByEyes === away) return;
+          heldByEyes = away;
+          if (!away && playing && !heldByTouch) kick();
+        },
+        onStop: () => { eyeSession = null; heldByEyes = false; if (playing && !heldByTouch) kick(); },
+      });
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      eyeButton.disabled = false;
+    }
+  });
+  viewer.addEventListener('close', () => { if (eyeSession) eyeSession.stop(); });
 
   let labelTimer;
   function updateRail() {

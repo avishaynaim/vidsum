@@ -236,7 +236,7 @@ function sendPage(res, content, type = 'text/html; charset=utf-8', extraHeaders 
     'Content-Length': payload.length,
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
-    'Content-Security-Policy': "default-src 'self'; img-src 'self' https://i.ytimg.com https://yt3.googleusercontent.com https://yt3.ggpht.com; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+    'Content-Security-Policy': "default-src 'self'; img-src 'self' https://i.ytimg.com https://yt3.googleusercontent.com https://yt3.ggpht.com; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; frame-ancestors 'none'",
     ...extraHeaders,
   });
   res.end(payload);
@@ -429,7 +429,24 @@ function createServer({
 
       // The dashboard's code is not secret (the Windows helper serves it openly too); the
       // page itself, the API and everything else need the key.
-      const STATIC = { '/remote-extras.js': 'application/javascript; charset=utf-8', '/remote-responsive.css': 'text/css; charset=utf-8' };
+      const STATIC = { '/remote-extras.js': 'application/javascript; charset=utf-8', '/remote-responsive.css': 'text/css; charset=utf-8',
+        '/eye-scroll.js': 'application/javascript; charset=utf-8' };
+      // MediaPipe for the viewer's eye page-turn (fetch-mediapipe.sh). Large and unchanging, so
+      // cached by the phone for a month instead of downloaded on every page load.
+      const VENDOR = /^\/vendor\/mediapipe\/(vision_bundle\.mjs|face_landmarker\.task|wasm\/vision_wasm_(nosimd_)?internal\.(js|wasm))$/;
+      if (req.method === 'GET' && VENDOR.test(url.pathname)) {
+        const remoteAddress = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+        if (!netGuard.isAllowedAddress(remoteAddress)) { sendJson(res, 403, { error: 'Forbidden.' }); return; }
+        const file = path.join(__dirname, url.pathname.slice(1));
+        if (!fs.existsSync(file)) { sendJson(res, 404, { error: 'MediaPipe is not installed on the server (run fetch-mediapipe.sh).' }); return; }
+        const type = url.pathname.endsWith('.wasm') ? 'application/wasm'
+          : url.pathname.endsWith('.task') ? 'application/octet-stream' : 'application/javascript; charset=utf-8';
+        const body = fs.readFileSync(file);
+        res.writeHead(200, { 'Content-Type': type, 'Content-Length': body.length, 'Cache-Control': 'public, max-age=2592000, immutable',
+          'X-Content-Type-Options': 'nosniff' });
+        res.end(body);
+        return;
+      }
       if (req.method === 'GET' && (url.pathname === '/app.js' || STATIC[url.pathname])) {
         const remoteAddress = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
         if (!netGuard.isAllowedAddress(remoteAddress)) { sendJson(res, 403, { error: 'Forbidden.' }); return; }
