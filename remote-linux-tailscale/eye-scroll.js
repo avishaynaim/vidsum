@@ -131,7 +131,7 @@ const el = (tag, props = {}, ...children) => { const n = Object.assign(document.
 
 export async function start({ viewer, body, bar, button, label = (icon, text) => [`${icon} ${text}`], setLookingAway, onStop }) {
   if (!window.isSecureContext || !navigator.mediaDevices) {
-    throw new Error('The camera only works on the https link. Open the dashboard at https://YOUR-MACHINE.YOUR-TAILNET.ts.net:8443 and try again.');
+    throw new Error('The camera only works on the https link. Open the dashboard through its https address (the Tailscale Funnel one, port 8443) and try again.');
   }
   const status = (text) => { button.textContent = `👁 ${text}`; };
   report(`start on ${navigator.userAgent}`);
