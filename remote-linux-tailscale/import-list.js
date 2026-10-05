@@ -64,7 +64,28 @@ async function listVideos(input, { limit = 1 } = {}, deps = {}) {
   }
   // yt-dlp names a channel's tab list "<channel> - Videos"; keep just the channel name.
   const title = String(info.title || '').trim().replace(/\s+-\s+(Videos|Streams|Shorts|Live)$/i, '');
-  return { kind: target.kind, url: target.url, title, videos };
+  return { kind: target.kind, url: target.url, title, videos, channelId: /^UC[\w-]{22}$/.test(info.channel_id || '') ? info.channel_id : null };
 }
 
-module.exports = { normalizeListUrl, listVideos, MAX_PLAYLIST };
+// A channel's RSS feed: its latest 15 videos with the ORIGINAL titles (the yt-dlp listing returns
+// YouTube's auto-translated ones), the publish date and the view count. id -> { title, publishedAt, views }.
+async function channelFeed(channelId, { fetchImpl = fetch } = {}) {
+  const res = await fetchImpl(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`,
+    { signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw new Error(`feed answered ${res.status}`);
+  const xml = await res.text();
+  const decode = (t) => t.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const feed = new Map();
+  for (const [, entry] of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const id = (/<yt:videoId>([\w-]{11})</.exec(entry) || [])[1];
+    if (!id) continue;
+    feed.set(id, {
+      title: decode((/<title>([\s\S]*?)<\/title>/.exec(entry) || [])[1] || '').trim(),
+      publishedAt: (/<published>([^<]+)</.exec(entry) || [])[1] || null,
+      views: Number((/views="(\d+)"/.exec(entry) || [])[1]) || null,
+    });
+  }
+  return feed;
+}
+
+module.exports = { channelFeed, normalizeListUrl, listVideos, MAX_PLAYLIST };

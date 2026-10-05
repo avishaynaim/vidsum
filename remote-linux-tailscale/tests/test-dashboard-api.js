@@ -380,8 +380,11 @@ async function testNewVideoCounts() {
     store, runner: fake.runner, fetchTitle: async () => '',
     listVideos: async (url, { limit }) => {
       const ids = url.includes('playlist') ? playlist : channel;
-      return { kind: url.includes('playlist') ? 'playlist' : 'channel', url, title: 'T', videos: ids.slice(0, url.includes('playlist') ? 200 : limit).map((videoId) => ({ videoId, title: videoId, durationSeconds: 0 })) };
+      return { kind: url.includes('playlist') ? 'playlist' : 'channel', url, title: 'T', channelId: url.includes('playlist') ? null : 'UCfakefakefakefakefakefa',
+        videos: ids.slice(0, url.includes('playlist') ? 200 : limit).map((videoId) => ({ videoId, title: `translated ${videoId}`, durationSeconds: 60 })) };
     },
+    // The channel feed knows only the newest video here (as if the rest were older than its 15).
+    channelFeed: async () => new Map([['V6xxxxxxxxx', { title: 'כותרת מקורית', publishedAt: '2026-10-05T09:00:00+00:00', views: 42 }]]),
   });
   const chanUrl = 'https://www.youtube.com/@c/videos';
   const listUrl = 'https://www.youtube.com/playlist?list=PLx';
@@ -404,6 +407,19 @@ async function testNewVideoCounts() {
   ({ sources } = await handleApi(scheduler, 'GET', '/api/sources', null));
   assert.deepStrictEqual(sources.find((x) => x.id === chan.id).pending.ids, ['V6xxxxxxxxx', 'V5xxxxxxxxx', 'V4xxxxxxxxx']);
   assert.strictEqual(store.jobs.length, 4, 'counting never adds jobs');
+  const videos = sources.find((x) => x.id === chan.id).pending.videos;
+  assert.deepStrictEqual(videos[0], { videoId: 'V6xxxxxxxxx', title: 'כותרת מקורית', durationSeconds: 60, publishedAt: '2026-10-05T09:00:00+00:00', views: 42 },
+    'the feed gives the original title, date and views');
+  assert.strictEqual(videos[1].title, 'translated V5xxxxxxxxx', 'beyond the feed: the listing title');
+
+  // "＋ Summarize" on one new video: queued with the list's level and label, gone from the list.
+  const one = await handleApi(scheduler, 'POST', '/api/sources/add-video', { id: chan.id, videoId: 'V5xxxxxxxxx' });
+  const added = store.get(one.jobId);
+  assert.strictEqual(added.SummaryLevel, 'reg');
+  assert.strictEqual(added.SourceKind, 'channel');
+  assert.deepStrictEqual(one.pending.ids, ['V6xxxxxxxxx', 'V4xxxxxxxxx']);
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/sources/add-video', { id: chan.id, videoId: 'V5xxxxxxxxx' }), (e) => e.status === 404);
+  store.remove(added); // the rest of this test counts from before
 
   // One of the new ones gets summarized some other way: it no longer counts.
   await add(scheduler, 'V4xxxxxxxxx', { summaryLevel: 'reg' });

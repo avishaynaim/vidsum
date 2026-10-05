@@ -1198,6 +1198,56 @@
     return parts.join(', ') + '.';
   }
 
+  // The new videos of a saved list, folded under its counter: thumbnail, original title, date,
+  // length, views, and ＋ Summarize for just that one. Which lists are unfolded survives the
+  // panel's refresh every minute.
+  const openNewVideos = new Set();
+  const ago = (iso) => {
+    if (!iso) return '';
+    const days = Math.floor((Date.now() - Date.parse(iso)) / 86400000);
+    return days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 7 ? `${days} days ago`
+      : new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: days > 300 ? 'numeric' : undefined });
+  };
+  const clock = (sec) => {
+    if (!sec) return '';
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s2 = String(sec % 60).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${s2}` : `${m}:${s2}`;
+  };
+  const views = (n) => (!n ? '' : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M views` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K views` : `${n} views`);
+  function newVideosList(source) {
+    const videos = (source.pending && source.pending.videos) || [];
+    if (!videos.length) return null;
+    const box = el('details', { className: 'new-videos', open: openNewVideos.has(source.id) });
+    box.addEventListener('toggle', () => { if (box.open) openNewVideos.add(source.id); else openNewVideos.delete(source.id); });
+    box.append(el('summary', {}, `Show the ${plural(videos.length, 'new video')}`));
+    for (const v of videos) {
+      const watch = `https://www.youtube.com/watch?v=${encodeURIComponent(v.videoId)}`;
+      const add = el('button', { type: 'button', className: 'primary' }, '＋ Summarize');
+      add.addEventListener('click', async () => {
+        add.disabled = true;
+        add.textContent = 'Adding…';
+        try {
+          await post('/api/sources/add-video', { id: source.id, videoId: v.videoId });
+          add.textContent = '✓ Added to the queue';
+          setTimeout(loadSources, 1500);
+        } catch (error) {
+          add.disabled = false;
+          add.textContent = '＋ Summarize';
+          alert(`Could not add: ${error.message}`);
+        }
+      });
+      box.append(el('div', { className: 'new-video' },
+        el('a', { href: watch, target: '_blank', rel: 'noopener noreferrer', className: 'new-video-thumb' },
+          el('img', { src: `https://i.ytimg.com/vi/${encodeURIComponent(v.videoId)}/mqdefault.jpg`, loading: 'lazy', alt: '' }),
+          v.durationSeconds ? el('span', { className: 'new-video-len' }, clock(v.durationSeconds)) : ''),
+        el('div', { className: 'new-video-info' },
+          el('a', { href: watch, target: '_blank', rel: 'noopener noreferrer', className: 'new-video-title', dir: 'auto' }, v.title || v.videoId),
+          el('div', { className: 'muted' }, [ago(v.publishedAt), views(v.views)].filter(Boolean).join(' · ')),
+          add)));
+    }
+    return box;
+  }
+
   function sourceRow(source) {
     const status = el('p', { className: 'muted' });
     const pending = source.pending;
@@ -1252,6 +1302,7 @@
         (source.title || source.url).replace(/\s+-\s+(Videos|Streams|Shorts|Live)$/i, '')),
       el('p', { className: 'muted' }, `${settings} · ${LEVEL_NAMES[source.summaryLevel] || source.summaryLevel}`),
       counter,
+      newVideosList(source) || '',
       status,
       el('div', { className: 'row source-actions' }, run, edit, remove));
   }

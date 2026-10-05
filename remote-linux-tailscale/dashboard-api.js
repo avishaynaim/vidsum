@@ -293,12 +293,14 @@ async function defaultGetTranscript(videoId) {
 class Scheduler {
   constructor({ store, runner, fetchTitle = fetchOEmbedTitle, browserReady = async () => true, attachRunner = null, log = () => {},
     listVideos = (url, options) => require('./import-list').listVideos(url, options),
+    channelFeed = (channelId) => require('./import-list').channelFeed(channelId),
     recycleBrowser = null, memoryAvailable = memAvailableMB,
     loadCheckpoint = (videoId) => require('./checkpoint').loadCheckpoint(videoId),
     getTranscript = defaultGetTranscript }) {
     this.getTranscript = getTranscript;
     this.loadCheckpoint = loadCheckpoint;
     this.listVideos = listVideos;
+    this.channelFeed = channelFeed;
     this.recycleBrowser = recycleBrowser;
     this.memoryAvailable = memoryAvailable;
     this.recycleDue = null; // reason, once a restart is wanted; waits for running videos to finish
@@ -529,14 +531,23 @@ class Scheduler {
     let pending;
     try {
       const listed = await this.listVideos(source.url, { limit: Math.max(source.limit || 1, 50) });
-      let ids;
+      let fresh;
       if (source.kind === 'channel') {
         const stop = listed.videos.findIndex((v) => seen.has(v.videoId) || hasJob(v.videoId));
-        ids = listed.videos.slice(0, stop < 0 ? listed.videos.length : stop).map((v) => v.videoId);
+        fresh = listed.videos.slice(0, stop < 0 ? listed.videos.length : stop);
       } else {
-        ids = listed.videos.filter((v) => !seen.has(v.videoId) && !hasJob(v.videoId)).map((v) => v.videoId);
+        fresh = listed.videos.filter((v) => !seen.has(v.videoId) && !hasJob(v.videoId));
       }
-      pending = { count: ids.length, ids, checkedAt: now(), error: '' };
+      // Details for the panel's list of new videos: the channel feed has the original titles,
+      // publish dates and views (for its latest 15); the listing has the length.
+      let feed = new Map();
+      if (listed.channelId && fresh.length) feed = await this.channelFeed(listed.channelId).catch(() => new Map());
+      const videos = fresh.map((v) => {
+        const f = feed.get(v.videoId) || {};
+        return { videoId: v.videoId, title: f.title || v.title || '', durationSeconds: v.durationSeconds || 0,
+          publishedAt: f.publishedAt || null, views: f.views || null };
+      });
+      pending = { count: videos.length, ids: videos.map((v) => v.videoId), videos, checkedAt: now(), error: '' };
     } catch (err) {
       pending = { ...(source.pending || { count: 0, ids: [] }), checkedAt: now(), error: err.message };
     }
@@ -544,6 +555,27 @@ class Scheduler {
     const entry = sources.find((s) => s.id === id);
     if (entry) { entry.pending = pending; this.store.saveSources(sources); }
     return { id, ...pending };
+  }
+
+  // "＋ Summarize" on one video in a saved list's new videos: queued at the list's level and
+  // labelled with the list, like an import; it leaves the new-videos list.
+  addSourceVideo(id, videoId) {
+    const source = this.findSource(id);
+    const video = ((source.pending && source.pending.videos) || []).find((v) => v.videoId === videoId);
+    if (!video) throw new ApiError(404, 'That video is not in this list\'s new videos any more.');
+    const job = this.enqueue({ videoId, requestId: crypto.randomUUID(), title: video.title, summaryLevel: source.summaryLevel }, spaceOf(source));
+    if (video.durationSeconds && !job.DurationSeconds) job.DurationSeconds = video.durationSeconds;
+    Object.assign(job, { SourceKind: source.kind, SourceTitle: source.title, SourceUrl: source.url });
+    this.store.save(job);
+    const sources = this.store.loadSources();
+    const entry = sources.find((s) => s.id === id);
+    if (entry && entry.pending) {
+      entry.pending.videos = (entry.pending.videos || []).filter((v) => v.videoId !== videoId);
+      entry.pending.ids = (entry.pending.ids || []).filter((v) => v !== videoId);
+      entry.pending.count = entry.pending.ids.length;
+      this.store.saveSources(sources);
+    }
+    return { jobId: job.Id, pending: entry ? entry.pending : null };
   }
 
   async peekAllSources(space = null) {
@@ -1230,6 +1262,7 @@ async function handleApi(scheduler, method, pathname, body, space = null) {
       await scheduler.restartBrowser('requested from the dashboard');
       return { restarted: true };
     case '/api/sources/run': return scheduler.runSource(body.id, { labelOnly: body.labelOnly === true });
+    case '/api/sources/add-video': return scheduler.addSourceVideo(body.id, body.videoId);
     case '/api/sources/run-all': return scheduler.runAllSources(space);
     case '/api/sources/peek': return body.id ? scheduler.peekSource(body.id) : scheduler.peekAllSources(space);
     case '/api/sources/update': return scheduler.updateSource(body);
