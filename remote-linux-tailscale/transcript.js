@@ -310,7 +310,7 @@ async function fetchTranscript(videoId, { onStatus = () => {}, whisper = false, 
     } catch (err) {
       if (err.stopped) throw err;
       if (err.whisperBusy) throw noCaptions(err);
-      failures.push(`local Whisper failed: ${err.message}`);
+      failures.push(`Whisper failed: ${err.message}`);
     }
   }
   throw noCaptions(new Error(`This video has no captions on YouTube${failures.length ? `, and ${failures.join('; ')}` : ''}.`));
