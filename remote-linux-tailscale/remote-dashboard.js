@@ -53,6 +53,10 @@ const SCRIPT_REPLACEMENTS = [
   // Over mobile data one status answer can miss the 8 s timeout; that used to flip the whole page
   // to "offline" and disable every action (Open summary too). Only 3 failures in a row count.
   ["  async function poll() {", "  let pollFailures = 0;\n  async function poll() {"],
+  // While a summary is open the list behind it is hidden: redrawing 200+ tiles every 1.5 s froze
+  // the page for a moment on phones and made auto-scroll jump. The list catches up on close.
+  ["    if (stopped || pollInFlight) return;",
+    "    if (stopped || pollInFlight) return;\n    if (document.querySelector('#summary-viewer[open]')) { clearTimeout(pollTimer); pollTimer = setTimeout(poll, 1500); return; }"],
   ["      const data = await request('/api/status');\n      setControllerAvailability(true);",
     "      const data = await request('/api/status');\n      pollFailures = 0;\n      setControllerAvailability(true);"],
   ["    } catch (error) {\n      setControllerAvailability(false,",

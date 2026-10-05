@@ -13,6 +13,9 @@
     if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
     return data;
   }
+  // Background refreshes skip while a summary is open: each re-downloads the whole job list, and
+  // on a phone that stalled the page for a moment, making auto-scroll jump.
+  const whileNotReading = (fn) => () => { if (!document.querySelector('#summary-viewer[open]')) fn(); };
   const el = (tag, props = {}, ...children) => {
     const node = Object.assign(document.createElement(tag), props);
     node.append(...children);
@@ -122,7 +125,7 @@
   });
   const syncPause = () => api('/api/status').then((st) => { if (!pauseAll.disabled) showPause(!!st.paused); }).catch(() => {});
   syncPause();
-  setInterval(syncPause, 5000);
+  setInterval(whileNotReading(syncPause), 5000);
 
   const LOGIN_TEXT = { 'signed-in': '✅', 'signed-out': '❌ not logged in', 'no-tab': '– not opened', loading: '… loading', unknown: '?' };
   async function refreshLogin() {
@@ -257,7 +260,9 @@
   function step(time) {
     frame = null;
     if (!playing || heldByTouch || heldByEyes) return;
-    const dt = lastTime ? Math.min(0.25, (time - lastTime) / 1000) : 0; // a slow phone still keeps the speed
+    // After a stall (the phone busy for a moment) carry on from where it was instead of jumping
+    // ahead by the time lost: a jump is what made reading hard.
+    const dt = lastTime ? Math.min(0.05, (time - lastTime) / 1000) : 0;
     lastTime = time;
     position += SPEEDS[speedIndex] * dt;
     viewerBody.scrollTop = position;
@@ -987,7 +992,7 @@
   const filtersBox = document.getElementById('length-filters') || document.getElementById('status-filters');
   if (filtersBox) filtersBox.after(selBar, selNote);
   refreshSelection();
-  setInterval(refreshSelection, 2000); // the list re-renders; keep "select all" in step with what is shown
+  setInterval(whileNotReading(refreshSelection), 2000); // the list re-renders; keep "select all" in step with what is shown
 
   // Ctrl/⌘+click or middle-click on a tile (or its "Open summary") opens that summary in a new
   // tab, so several can be opened one after another; a plain click still opens it here.
@@ -1301,7 +1306,7 @@
   const clearFailed = document.querySelector('#clear-errors');
   if (clearFailed) clearFailed.before(retryFailed);
   refreshFailed();
-  setInterval(refreshFailed, 10000);
+  setInterval(whileNotReading(refreshFailed), 10000);
   const message = document.querySelector('#message');
   if (message) message.before(queueNote);
   const refreshQueueNote = () => api('/api/status').then((status) => {
@@ -1309,11 +1314,11 @@
     queueNote.hidden = !status.queueNote;
   }).catch(() => {});
   refreshQueueNote();
-  setInterval(refreshQueueNote, 10000);
+  setInterval(whileNotReading(refreshQueueNote), 10000);
   const addPanel = document.querySelector('section.panel:has(#batch)');
   if (addPanel) addPanel.append(importBlock);
   loadSources();
-  setInterval(loadSources, 60000); // pick up the server's background counts
+  setInterval(whileNotReading(loadSources), 60000); // pick up the server's background counts
   api('/api/status').then((status) => {
     if (LEVEL_NAMES[status.summaryLevel]) importLevel.value = status.summaryLevel;
     if (status.maxConcurrent) parallel.value = String(status.maxConcurrent);
@@ -1332,7 +1337,7 @@
     ipBlock.hidden = !config.ipRotation;
     topIp.hidden = !config.ipRotation;
     panel.hidden = !config.signIn && !config.ipRotation;
-    if (config.signIn) { refreshLogin(); setInterval(refreshLogin, 15000); }
+    if (config.signIn) { refreshLogin(); setInterval(whileNotReading(refreshLogin), 15000); }
     if (config.ipRotation) refreshIp();
   }).catch(() => { panel.hidden = true; });
 })();
