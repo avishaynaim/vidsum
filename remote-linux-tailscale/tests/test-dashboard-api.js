@@ -525,10 +525,12 @@ async function testParallel() {
   await add(scheduler, 'P5xxxxxxxxx');
   await tick();
   assert.strictEqual(store.jobs.find((j) => j.VideoId === 'P5xxxxxxxxx').State, 'queued', 'low memory holds extra videos');
+  assert.match(scheduler.status().queueNote, /Low memory \(900 MB free\)/, 'the page says why the free slot stays empty');
   free = 8000;
   fake.pending.get('P3xxxxxxxxx').resolve({ text: 'x', provider: 'Claude' });
   await tick(); await tick();
   assert.strictEqual(store.jobs.find((j) => j.VideoId === 'P5xxxxxxxxx').State, 'gemini');
+  assert.strictEqual(scheduler.status().queueNote, '', 'no note once nothing holds the queue');
 
   // The setting: 1 at a time; validation.
   const saved = await handleApi(scheduler, 'POST', '/api/settings', { maxConcurrent: 1 });
@@ -541,15 +543,24 @@ async function testParallel() {
   const store2 = new JobStore(tmpDir());
   let restarts = 0;
   const s2 = new Scheduler({ store: store2, runner: fake.runner, fetchTitle: async () => '', recycleBrowser: async () => { restarts++; }, memoryAvailable: () => 8000 });
-  s2.videosSinceRecycle = 9;
+  s2.videosSinceRecycle = 19;
   for (const id of ['Q1xxxxxxxxx', 'Q2xxxxxxxxx']) await add(s2, id);
   await tick();
   fake.pending.get('Q1xxxxxxxxx').resolve({ text: 'x', provider: 'Claude' });
   await tick(); await tick();
   assert.strictEqual(restarts, 0, 'not while Q2 still uses the browser');
+  await add(s2, 'Q3xxxxxxxxx');
+  await tick();
+  assert.strictEqual(store2.jobs.find((j) => j.VideoId === 'Q3xxxxxxxxx').State, 'queued', 'a due restart holds new videos');
+  assert.match(s2.status().queueNote, /until the server browser restarts \(routine refresh after 20 videos\).*1 running video finishes/);
   fake.pending.get('Q2xxxxxxxxx').resolve({ text: 'x', provider: 'Claude' });
   await tick(); await tick();
   assert.strictEqual(restarts, 1, 'restarted once both finished');
+  await tick();
+  assert.strictEqual(store2.jobs.find((j) => j.VideoId === 'Q3xxxxxxxxx').State, 'gemini', 'the held video starts after the restart');
+  assert.strictEqual(s2.status().queueNote, '');
+  fake.pending.get('Q3xxxxxxxxx').resolve({ text: 'x', provider: 'Claude' });
+  await tick(); await tick();
 }
 
 async function testProviderPool() {
@@ -580,30 +591,30 @@ async function testBrowserRecycling() {
     store, runner: fake.runner, fetchTitle: async () => '',
     recycleBrowser: () => { recycles++; return new Promise((r) => { finishRecycle = r; }); },
   });
-  const ids = Array.from({ length: 12 }, (_, i) => `R${String(i).padStart(2, '0')}xxxxxxxx`);
+  const ids = Array.from({ length: 22 }, (_, i) => `R${String(i).padStart(2, '0')}xxxxxxxx`);
   for (const id of ids) await add(scheduler, id);
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < 19; i++) {
     await tick();
     fake.pending.get(ids[i]).resolve({ text: 'x', provider: 'Claude' });
     await tick(); await tick();
   }
-  assert.strictEqual(recycles, 0, 'no restart before 10 videos');
+  assert.strictEqual(recycles, 0, 'no restart before 20 videos');
   await tick();
-  fake.pending.get(ids[9]).resolve({ text: 'x', provider: 'Claude' });
+  fake.pending.get(ids[19]).resolve({ text: 'x', provider: 'Claude' });
   await tick(); await tick();
-  assert.strictEqual(recycles, 1, 'the browser restarts after 10 videos');
-  assert.strictEqual(store.jobs.find((j) => j.VideoId === ids[10]).State, 'queued', 'the next video waits for the restart');
+  assert.strictEqual(recycles, 1, 'the browser restarts after 20 videos');
+  assert.strictEqual(store.jobs.find((j) => j.VideoId === ids[20]).State, 'queued', 'the next video waits for the restart');
   assert.match(scheduler.status().browserMessage, /Restarting the server browser/);
   finishRecycle();
   await tick(); await tick();
-  assert.strictEqual(store.jobs.find((j) => j.VideoId === ids[10]).State, 'gemini', 'the queue continues after the restart');
+  assert.strictEqual(store.jobs.find((j) => j.VideoId === ids[20]).State, 'gemini', 'the queue continues after the restart');
 
   // A freeze (every provider failed with infrastructure errors) restarts it at once.
-  const job = store.jobs.find((j) => j.VideoId === ids[10]);
+  const job = store.jobs.find((j) => j.VideoId === ids[20]);
   // Replay what rotate.js reports when the browser stops answering, then the retryable stop.
   const onStatusLines = ['ChatGPT', 'Gemini', 'Claude'].map((p) => `${p}: transient infrastructure error persisted after 3 attempts; rotating.`);
-  onStatusLines.forEach((line) => fake.statusOf(ids[10])(line));
-  fake.pending.get(ids[10]).reject(Object.assign(new Error('STOPPED (retryable): Chunk part 1 failed on every provider'), { retryable: true }));
+  onStatusLines.forEach((line) => fake.statusOf(ids[20])(line));
+  fake.pending.get(ids[20]).reject(Object.assign(new Error('STOPPED (retryable): Chunk part 1 failed on every provider'), { retryable: true }));
   await tick(); await tick();
   assert.strictEqual(recycles, 2, 'a frozen browser is restarted right away');
   assert.match(job.Message, /stopped responding/);

@@ -53,7 +53,9 @@
     whisperNote);
   const parallelBlock = el('div', {},
     el('div', { className: 'panel-title', style: 'margin-top:12px' }, 'Videos at the same time'), parallel,
-    el('p', { className: 'muted' }, 'Up to 3 videos run together, each on a different AI site (about 3× faster). Extra videos only start while the server has at least 1.5 GB of memory free.'));
+    el('p', { className: 'muted' }, 'Up to 3 videos run together, each on a different AI site (about 3× faster). Extra videos only start while the server has at least 1.5 GB of memory free, and not while the server browser is due for its routine restart (every 20 videos).'));
+  // Why the free slots stay empty, refreshed with the queue (status.queueNote, '' when nothing holds them).
+  const queueNote = el('div', { className: 'notice', id: 'queue-note', hidden: true });
   // Always-visible copy of the IP control in the sticky top bar (the panel sits below the
   // video list on phones).
   const topIp = el('button', { id: 'topbar-ip', type: 'button', hidden: true, title: 'Change the public IP' }, 'IP …');
@@ -1194,6 +1196,14 @@
   if (clearFailed) clearFailed.before(retryFailed);
   refreshFailed();
   setInterval(refreshFailed, 10000);
+  const message = document.querySelector('#message');
+  if (message) message.before(queueNote);
+  const refreshQueueNote = () => api('/api/status').then((status) => {
+    queueNote.textContent = status.queueNote || '';
+    queueNote.hidden = !status.queueNote;
+  }).catch(() => {});
+  refreshQueueNote();
+  setInterval(refreshQueueNote, 10000);
   const addPanel = document.querySelector('section.panel:has(#batch)');
   if (addPanel) addPanel.append(importBlock);
   loadSources();

@@ -35,7 +35,7 @@ const SOURCE_PEEK_INTERVAL_MS = 30 * 60 * 1000; // how often saved lists are che
 const SEEN_IDS_KEEP = 1000;
 // The server browser grows with every video and froze once after ~50; restart it this often
 // (and at once when it stops responding). Logins live in the profile and survive.
-const BROWSER_RECYCLE_EVERY = 10;
+const BROWSER_RECYCLE_EVERY = 20;
 // Videos processed at the same time (one AI step per provider at a time, see rotate.js's
 // ProviderPool, so more than 3 cannot help). Extra videos only start while the host has this
 // much memory available: running out of memory crashed the provider tabs once.
@@ -386,6 +386,7 @@ class Scheduler {
       maxConcurrent: this.maxConcurrent, startIntervalMilliseconds: 0, mobileOrigin: '',
       whisperFallback: this.settings.whisperFallback !== false, whisperMissing: require('./whisper').whisperMissing(),
       providerOrder: PROVIDERS,
+      queueNote: this.queueNote(),
       active: jobs.filter((j) => !isTerminal(j) && j.State !== 'queued').length,
       queued: jobs.filter((j) => j.State === 'queued').length,
       reviewRequired: jobs.some((j) => j.State === 'needs-review'),
@@ -599,6 +600,24 @@ class Scheduler {
   deleteSource(id) {
     this.findSource(id);
     this.store.saveSources(this.store.loadSources().filter((s) => s.id !== id));
+  }
+
+  // Why free slots stay empty while videos are queued (shown on the page; '' when nothing holds them).
+  queueNote() {
+    const free = this.maxConcurrent - this.running.size;
+    if (free <= 0 || this.held || this.paused || !this.ready || this.recycling) return '';
+    const startable = this.store.jobs.some((j) => j.State === 'queued' && !j.WatchLater &&
+      !(j.WaitUntilUtc && Date.parse(j.WaitUntilUtc) > Date.now()));
+    if (!startable) return '';
+    if (this.recycleDue) {
+      return `No new videos start until the server browser restarts (${this.recycleDue}); ` +
+        `it restarts once the ${this.running.size} running video${this.running.size === 1 ? '' : 's'} finish${this.running.size === 1 ? 'es' : ''}.`;
+    }
+    if (this.memoryLimited) {
+      return `Low memory (${Math.round(this.memoryAvailable())} MB free): no more videos start in parallel until ` +
+        `${MIN_FREE_MB_FOR_PARALLEL} MB is free.`;
+    }
+    return '';
   }
 
   pump() {
