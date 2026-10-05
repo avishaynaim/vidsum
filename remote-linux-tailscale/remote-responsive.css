@@ -266,6 +266,7 @@ body.hide-read .job-card.is-read { display: none; }
 #summary-viewer .autoscroll-play { font-weight: 750; min-width: 8.5em; }
 #summary-viewer .autoscroll-play.on { background: var(--accent); color: #0b111a; border-color: var(--accent); }
 #summary-viewer .autoscroll-speed { min-width: 4.8em; text-align: center; font-size: 13px; color: var(--muted); font-weight: 700; }
+#summary-viewer .autoscroll-percent { min-width: 3.2em; text-align: center; font-size: 13px; color: var(--muted); font-weight: 700; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
 
 /* 👁 Eye page-turn (eye-scroll.js). */
 #summary-viewer .eye-toggle.on { background: var(--mint); color: #0b111a; border-color: var(--mint); font-weight: 750; }

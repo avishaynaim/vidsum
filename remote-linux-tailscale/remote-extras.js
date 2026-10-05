@@ -223,7 +223,10 @@
   const faster = el('button', { type: 'button', title: 'Faster' }, '+');
   const speedLabel = el('span', { className: 'autoscroll-speed' });
   const nextSection = el('button', { type: 'button', title: 'Jump to the next section' }, ...label('⤓', 'Next section'));
-  const autoBar = el('div', { className: 'autoscroll-bar' }, playButton, slower, speedLabel, faster, nextSection);
+  // How far through the text you are; lives in the bar so it never covers the text (the start of
+  // a Hebrew line is on the right, where the rail is).
+  const readPercent = el('span', { className: 'autoscroll-percent', title: 'How far through the text you are' }, '0%');
+  const autoBar = el('div', { className: 'autoscroll-bar' }, playButton, slower, speedLabel, faster, nextSection, readPercent);
   viewer.append(autoBar);
   const showSpeed = () => { speedLabel.replaceChildren(el('span', { className: 'lbl' }, 'Speed '), String(speedIndex + 1)); };
   showSpeed();
@@ -355,12 +358,15 @@
     railThumb.style.height = `${thumb}px`;
     railThumb.style.transform = `translateY(${top}px)`;
     const percent = Math.round(100 * scrollTop / scrollable);
-    railLabel.textContent = `${percent}%`; // just the number: a section name covered the text
+    readPercent.textContent = `${percent}%`;
+    // The bubble beside the rail only while a finger drags it (choosing where to jump): any other
+    // scrolling - auto-scroll, the eyes, a swipe - kept it up over the start of the lines.
+    railLabel.textContent = `${percent}%`;
     railLabel.style.top = `${rail.offsetTop + top + thumb / 2}px`;
     railLabel.hidden = false;
-    railLabel.classList.add('visible');
     clearTimeout(labelTimer);
-    labelTimer = setTimeout(() => { if (!dragging) railLabel.classList.remove('visible'); }, 1400);
+    if (dragging) railLabel.classList.add('visible');
+    else labelTimer = setTimeout(() => railLabel.classList.remove('visible'), 700);
   }
   viewerBody.addEventListener('scroll', updateRail, { passive: true });
   new ResizeObserver(updateRail).observe(viewerBody);
