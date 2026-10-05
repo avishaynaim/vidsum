@@ -421,6 +421,27 @@ async function testNewVideoCounts() {
   peek = await handleApi(scheduler, 'POST', '/api/sources/peek', { id: chan.id });
   assert.deepStrictEqual(peek.ids, ['V6xxxxxxxxx'], 'and the next check agrees');
   await assert.rejects(handleApi(scheduler, 'POST', '/api/sources/add-video', { id: chan.id, videoId: 'V5xxxxxxxxx' }), (e) => e.status === 404);
+  // ✕ Not interested: on a channel, dismissing the newest leaves the older new ones counted.
+  channel = ['V9xxxxxxxxx', 'V8xxxxxxxxx', ...channel];
+  peek = await handleApi(scheduler, 'POST', '/api/sources/peek', { id: chan.id });
+  assert.deepStrictEqual(peek.ids, ['V9xxxxxxxxx', 'V8xxxxxxxxx', 'V6xxxxxxxxx']);
+  const d = await handleApi(scheduler, 'POST', '/api/sources/dismiss', { id: chan.id, videoId: 'V9xxxxxxxxx' });
+  assert.deepStrictEqual(d.pending.ids, ['V8xxxxxxxxx', 'V6xxxxxxxxx']);
+  peek = await handleApi(scheduler, 'POST', '/api/sources/peek', { id: chan.id });
+  assert.deepStrictEqual(peek.ids, ['V8xxxxxxxxx', 'V6xxxxxxxxx'], 'the older ones still count after the next check');
+  const all2 = await handleApi(scheduler, 'POST', '/api/sources/dismiss', { id: chan.id, all: true });
+  assert.strictEqual(all2.pending.count, 0, 'Dismiss all');
+  peek = await handleApi(scheduler, 'POST', '/api/sources/peek', { id: chan.id });
+  assert.strictEqual(peek.count, 0, 'and they stay dismissed');
+  const before = store.jobs.length;
+  const ran = await handleApi(scheduler, 'POST', '/api/sources/run', { id: chan.id });
+  assert.ok(!store.jobs.some((j) => ['V9xxxxxxxxx', 'V8xxxxxxxxx', 'V6xxxxxxxxx'].includes(j.VideoId)), 'Add new videos skips dismissed ones');
+  assert.strictEqual(ran.skipped, 2, 'the latest 2 (the saved setting) were both dismissed');
+  // Undo for the rest of the test: forget the dismissals and the extra uploads.
+  for (const j of store.jobs.slice(before)) store.remove(j);
+  channel = channel.filter((v) => v !== 'V9xxxxxxxxx' && v !== 'V8xxxxxxxxx');
+  { const s2 = store.loadSources(); const c2 = s2.find((x) => x.id === chan.id); c2.dismissedIds = []; c2.seenIds = c2.seenIds.filter((v) => !['V9xxxxxxxxx', 'V8xxxxxxxxx', 'V6xxxxxxxxx'].includes(v) || false); store.saveSources(s2); }
+
   // The rest of this test counts from before: undo that pick.
   store.remove(added);
   const saved = store.loadSources();

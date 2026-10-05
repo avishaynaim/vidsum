@@ -1214,15 +1214,42 @@
     return h ? `${h}:${String(m).padStart(2, '0')}:${s2}` : `${m}:${s2}`;
   };
   const views = (n) => (!n ? '' : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M views` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K views` : `${n} views`);
+  function notInterested(v) {
+    const button = el('button', { type: 'button', title: 'Not interested: remove it and never suggest it again' }, '✕');
+    button.addEventListener('click', () => {
+      const row = button.closest('.new-video');
+      if (row) row.style.opacity = '.4';
+      button.disabled = true;
+      button.dispatchEvent(new CustomEvent('dismiss-video', { bubbles: true, detail: v.videoId }));
+    });
+    return button;
+  }
   function newVideosList(source) {
     const videos = (source.pending && source.pending.videos) || [];
     if (!videos.length) return null;
     const box = el('details', { className: 'new-videos', open: openNewVideos.has(source.id) });
     box.addEventListener('toggle', () => { if (box.open) openNewVideos.add(source.id); else openNewVideos.delete(source.id); });
+    box.addEventListener('dismiss-video', (event) => {
+      post('/api/sources/dismiss', { id: source.id, videoId: event.detail }).then(loadSources)
+        .catch((error) => { alert(`Could not remove it: ${error.message}`); loadSources(); });
+    });
     box.append(el('summary', {}, `Show the ${plural(videos.length, 'new video')}`));
     if (source.kind === 'channel' && videos.length > 1) {
       box.append(el('p', { className: 'muted new-videos-hint' }, 'Newest first. Summarizing one also clears the older ones from the count; only newer videos stay new.'));
     }
+    // ✕ / Dismiss all: never suggested (or added by "Add new videos") again.
+    const dismiss = async (body, what) => {
+      try { await post('/api/sources/dismiss', { id: source.id, ...body }); loadSources(); }
+      catch (error) { alert(`Could not remove ${what}: ${error.message}`); }
+    };
+    const dismissAll = el('button', { type: 'button', className: 'new-videos-dismiss-all' }, `✕ Dismiss all ${videos.length}`);
+    dismissAll.addEventListener('click', () => {
+      if (confirm(`Remove all ${plural(videos.length, 'new video')} of "${source.title}" from the list? They will not be suggested or added again.`)) {
+        dismissAll.disabled = true;
+        dismiss({ all: true }, 'them');
+      }
+    });
+    box.append(el('div', { className: 'new-videos-tools' }, dismissAll));
     for (const v of videos) {
       const watch = `https://www.youtube.com/watch?v=${encodeURIComponent(v.videoId)}`;
       const add = el('button', { type: 'button', className: 'primary' }, '＋ Summarize');
@@ -1246,7 +1273,7 @@
         el('div', { className: 'new-video-info' },
           el('a', { href: watch, target: '_blank', rel: 'noopener noreferrer', className: 'new-video-title', dir: 'auto' }, v.title || v.videoId),
           el('div', { className: 'muted' }, [ago(v.publishedAt), views(v.views)].filter(Boolean).join(' · ')),
-          add)));
+          el('div', { className: 'new-video-actions' }, add, notInterested(v)))));
     }
     return box;
   }

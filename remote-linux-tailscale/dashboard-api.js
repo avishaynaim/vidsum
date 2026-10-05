@@ -33,6 +33,7 @@ const MAX_UNFINISHED = 200;
 const HISTORY_KEEP = 1000;
 const SOURCE_PEEK_INTERVAL_MS = 30 * 60 * 1000; // how often saved lists are checked for new videos
 const SEEN_IDS_KEEP = 1000;
+const DISMISSED_KEEP = 2000; // per saved list
 // The server browser grows with every video and froze once after ~50; restart it this often
 // (and at once when it stops responding). Logins live in the profile and survive.
 const BROWSER_RECYCLE_EVERY = 20;
@@ -480,7 +481,9 @@ class Scheduler {
     const limit = listed.kind === 'channel' ? Math.max(1, Math.floor(Number(body.limit)) || 1) : null;
     // Each job remembers where it came from; shown on its tile and searchable.
     const source = { SourceKind: listed.kind, SourceTitle: listed.title || listed.url || body.url, SourceUrl: listed.url || body.url };
+    const skip = new Set(Array.isArray(body.skipIds) ? body.skipIds : []); // dismissed in the panel
     for (const video of listed.videos) {
+      if (skip.has(video.videoId)) { result.skipped = (result.skipped || 0) + 1; continue; }
       const existing = this.store.jobs.find((j) => j.VideoId === video.videoId && j.SummaryLevel === level && inSpace(space)(j));
       if (existing) {
         if (existing.State === 'completed') result.alreadyDone++; else result.alreadyListed++;
@@ -545,6 +548,8 @@ class Scheduler {
       } else {
         fresh = listed.videos.filter((v) => !seen.has(v.videoId) && !hasJob(v.videoId));
       }
+      const dismissed = new Set(source.dismissedIds || []);
+      fresh = fresh.filter((v) => !dismissed.has(v.videoId)); // "✕ Not interested" in the panel
       // Details for the panel's list of new videos: the channel feed has the original titles,
       // publish dates and views (for its latest 15); the listing has the length.
       let feed = new Map();
@@ -593,6 +598,24 @@ class Scheduler {
     return { jobId: job.Id, pending: entry ? entry.pending : null };
   }
 
+  // "✕ Not interested" / "Dismiss all" in a saved list's new videos: never suggested or added
+  // again (kept apart from seenIds, which on a channel mark where "new" ends).
+  dismissSourceVideos(id, { videoId = null, all = false } = {}) {
+    this.findSource(id);
+    const sources = this.store.loadSources();
+    const entry = sources.find((s) => s.id === id);
+    const pending = entry.pending || { count: 0, ids: [], videos: [] };
+    const ids = all ? [...(pending.ids || [])] : [videoId];
+    if (!all && !/^[A-Za-z0-9_-]{11}$/.test(videoId || '')) throw new ApiError(400, 'Which video?');
+    entry.dismissedIds = [...new Set([...ids, ...(entry.dismissedIds || [])])].slice(0, DISMISSED_KEEP);
+    pending.videos = (pending.videos || []).filter((v) => !ids.includes(v.videoId));
+    pending.ids = (pending.ids || []).filter((v) => !ids.includes(v));
+    pending.count = pending.ids.length;
+    entry.pending = pending;
+    this.store.saveSources(sources);
+    return { dismissed: ids.length, pending };
+  }
+
   async peekAllSources(space = null) {
     if (this.peeking) return { results: [], busy: true };
     this.peeking = true;
@@ -617,7 +640,7 @@ class Scheduler {
     const source = this.findSource(id);
     // Never leave a known new video behind: take at least as many as are waiting.
     const limit = Math.max(source.limit || 1, (source.pending && source.pending.count) || 0);
-    return this.importList({ url: source.url, limit, summaryLevel: source.summaryLevel, labelOnly }, spaceOf(source)).then((result) => {
+    return this.importList({ url: source.url, limit, summaryLevel: source.summaryLevel, labelOnly, skipIds: source.dismissedIds || [] }, spaceOf(source)).then((result) => {
       if (limit !== (source.limit || 1)) {
         // Keep the user's own "latest N" setting; the larger count was only for this run.
         const sources = this.store.loadSources();
@@ -1292,6 +1315,7 @@ async function handleApi(scheduler, method, pathname, body, space = null) {
       return { restarted: true };
     case '/api/sources/run': return scheduler.runSource(body.id, { labelOnly: body.labelOnly === true });
     case '/api/sources/add-video': return scheduler.addSourceVideo(body.id, body.videoId);
+    case '/api/sources/dismiss': return scheduler.dismissSourceVideos(body.id, { videoId: body.videoId, all: body.all === true });
     case '/api/sources/run-all': return scheduler.runAllSources(space);
     case '/api/sources/peek': return body.id ? scheduler.peekSource(body.id) : scheduler.peekAllSources(space);
     case '/api/sources/update': return scheduler.updateSource(body);

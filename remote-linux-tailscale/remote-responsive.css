@@ -377,3 +377,7 @@ body.hide-read .job-card.is-read { display: none; }
 .new-video-info .muted { font-size: 12px; }
 .new-video-info button { padding: 4px 10px; font-size: 12.5px; }
 .new-videos-hint { margin: 0; padding: 0 12px 8px; font-size: 12px; }
+.new-videos-tools { display: flex; justify-content: flex-end; padding: 0 10px 8px; }
+.new-videos-tools button { padding: 4px 10px; font-size: 12.5px; }
+.new-video-actions { display: flex; gap: 6px; }
+.new-video-actions button { white-space: nowrap; }
