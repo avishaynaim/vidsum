@@ -592,10 +592,19 @@
       // opened, before the end-of-text rule, still have their place); the end starts over at the top.
       const resumeAt = !(focus && focus.key) && d.readPos > 0.01 && d.readPos < UNFINISHED ? d.readPos : 0;
       if (resumeAt) {
+        const place = () => { viewerBody.scrollTop = resumeAt * Math.max(0, viewerBody.scrollHeight - viewerBody.clientHeight); };
         requestAnimationFrame(() => {
-          viewerBody.scrollTop = resumeAt * Math.max(0, viewerBody.scrollHeight - viewerBody.clientHeight);
+          place();
           showToast(`Continuing where you stopped (${Math.round(resumeAt * 100)}%)`, false);
         });
+        // The text can still change height just after opening (a section settling); keep the
+        // place for a moment, until the reader touches the screen.
+        let touched = false;
+        const touch = () => { touched = true; };
+        ['pointerdown', 'wheel', 'keydown', 'touchstart'].forEach((e) => viewerBody.addEventListener(e, touch, { once: true, passive: true }));
+        const settle = new ResizeObserver(() => { if (!touched && viewer.dataset.jobId === jobId) place(); });
+        [...viewerBody.children].forEach((child) => settle.observe(child));
+        setTimeout(() => settle.disconnect(), 1500);
       }
       requestAnimationFrame(() => requestAnimationFrame(() => startReadTracking(jobId, !!d.readAt, resumeAt)));
       if (focus && focus.key) {
