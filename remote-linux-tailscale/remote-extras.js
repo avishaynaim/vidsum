@@ -372,6 +372,7 @@
   // Where you stopped (0..1 of the scrollable text) is saved on the server while you scroll and
   // when the viewer closes, so reopening it - on any device - continues from there.
   let readTrack = null; // { jobId, read, saved, pos, timer }
+  const UNFINISHED = 0.97; // a position below this is resumed and shown as "📖 n%" on the tile
   const readPosNow = () => {
     const scrollable = viewerBody.scrollHeight - viewerBody.clientHeight;
     return scrollable > 4 ? Math.min(1, Math.max(0, viewerBody.scrollTop / scrollable)) : 1;
@@ -386,7 +387,10 @@
     const pos = Math.round(t.pos * 1000) / 1000;
     if (Math.abs(pos - t.saved) < 0.01) return;
     t.saved = pos;
-    post('/api/read-pos', { jobId: t.jobId, pos }).catch(() => {}); // a lost position is harmless
+    // keepalive: the request still goes out when the page is being closed or put away.
+    fetch('/api/read-pos', { method: 'POST', keepalive: true, cache: 'no-store',
+      headers: { 'X-YT-Token': token(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: t.jobId, pos }) }).catch(() => {}); // a lost position is harmless
   }
   function checkReadEnd() {
     const t = readTrack;
@@ -409,6 +413,9 @@
     t.timer = setTimeout(() => saveReadPos(), 1200);
   }, { passive: true });
   viewer.addEventListener('close', () => { saveReadPos(); readTrack = null; });
+  // Closing the tab or switching apps never closes the dialog: save the place then too.
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveReadPos(); });
+  window.addEventListener('pagehide', () => saveReadPos());
 
   let labelTimer;
   function updateRail() {
@@ -581,8 +588,9 @@
       viewerBody.replaceChildren(...blocks);
       viewerBody.scrollTop = 0;
       showViewerRead(!!d.readAt);
-      // An unfinished summary continues where it was left (a finished one starts at the top).
-      const resumeAt = !d.readAt && !(focus && focus.key) && d.readPos > 0.01 && d.readPos < 1 ? d.readPos : 0;
+      // An unfinished position is resumed, read mark or not (summaries marked read just by being
+      // opened, before the end-of-text rule, still have their place); the end starts over at the top.
+      const resumeAt = !(focus && focus.key) && d.readPos > 0.01 && d.readPos < UNFINISHED ? d.readPos : 0;
       if (resumeAt) {
         requestAnimationFrame(() => {
           viewerBody.scrollTop = resumeAt * Math.max(0, viewerBody.scrollHeight - viewerBody.clientHeight);

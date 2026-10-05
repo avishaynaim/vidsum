@@ -138,9 +138,10 @@ const SCRIPT_REPLACEMENTS = [
     "        row.levelSelect.parentNode.prepend(row.readToggle);\n" +
     "      }\n" +
     "      row.readJobId = job.Id; row.readIsRead = !!job.ReadAt;\n" +
-    "      row.read.hidden = !job.ReadAt && !(job.ReadPos > 0.01);\n" +
-    "      if (job.ReadAt) row.read.textContent = '✓ Read ' + new Date(job.ReadAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });\n" +
-    "      else if (job.ReadPos > 0.01) row.read.textContent = '📖 ' + Math.round(job.ReadPos * 100) + '%';\n" +
+    "      const unfinished = job.ReadPos > 0.01 && job.ReadPos < 0.97; // remote-extras.js UNFINISHED\n" +
+    "      row.read.hidden = !job.ReadAt && !unfinished;\n" +
+    "      if (unfinished) row.read.textContent = '📖 ' + Math.round(job.ReadPos * 100) + '%';\n" +
+    "      else if (job.ReadAt) row.read.textContent = '✓ Read ' + new Date(job.ReadAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });\n" +
     "      row.readToggle.hidden = job.State !== 'completed' && !job.ReadAt;\n" +
     "      row.readToggle.textContent = job.ReadAt ? '↺ Mark as unread' : '✓ Mark as read';\n" +
     "      row.element.classList.toggle('is-read', !!job.ReadAt);"],
