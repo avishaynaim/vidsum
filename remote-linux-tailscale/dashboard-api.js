@@ -368,6 +368,8 @@ class Scheduler {
     this.peekStart.unref();
     this.peekTimer = setInterval(peek, SOURCE_PEEK_INTERVAL_MS);
     this.peekTimer.unref();
+    this.titleCheck = setTimeout(() => this.recheckImportedTitles().catch(() => {}), 90 * 1000);
+    this.titleCheck.unref();
   }
 
   async tick() {
@@ -448,9 +450,14 @@ class Scheduler {
     // Keep only the most recent finished history.
     const history = this.store.jobs.filter((j) => isTerminal(j) && j.State !== 'needs-review');
     for (const old of history.slice(0, Math.max(0, history.length - HISTORY_KEEP))) this.store.remove(old);
-    if (!job.Title) {
+    if (!job.Title || body.titleFromListing) {
+      // A channel/playlist listing gives YouTube's auto-translated title (English for a Hebrew
+      // lecture); oEmbed gives the original, which replaces it.
       this.fetchTitle(videoId).then((found) => {
-        if (found && !job.Title && this.store.get(job.Id)) { job.Title = found; this.store.save(job); }
+        if (!this.store.get(job.Id)) return;
+        if (found && found !== job.Title) job.Title = found;
+        job.TitleChecked = true;
+        this.store.saveQuiet(job);
       });
     }
     this.pump();
@@ -482,7 +489,7 @@ class Scheduler {
       }
       if (body.labelOnly) continue; // only label videos that already have a job
       try {
-        const job = this.enqueue({ videoId: video.videoId, requestId: crypto.randomUUID(), title: video.title, summaryLevel: level }, space);
+        const job = this.enqueue({ videoId: video.videoId, requestId: crypto.randomUUID(), title: video.title, summaryLevel: level, titleFromListing: true }, space);
         if (video.durationSeconds && !job.DurationSeconds) job.DurationSeconds = video.durationSeconds;
         Object.assign(job, source);
         this.store.save(job);
@@ -563,7 +570,7 @@ class Scheduler {
     const source = this.findSource(id);
     const video = ((source.pending && source.pending.videos) || []).find((v) => v.videoId === videoId);
     if (!video) throw new ApiError(404, 'That video is not in this list\'s new videos any more.');
-    const job = this.enqueue({ videoId, requestId: crypto.randomUUID(), title: video.title, summaryLevel: source.summaryLevel }, spaceOf(source));
+    const job = this.enqueue({ videoId, requestId: crypto.randomUUID(), title: video.title, summaryLevel: source.summaryLevel, titleFromListing: true }, spaceOf(source));
     if (video.durationSeconds && !job.DurationSeconds) job.DurationSeconds = video.durationSeconds;
     Object.assign(job, { SourceKind: source.kind, SourceTitle: source.title, SourceUrl: source.url });
     this.store.save(job);
@@ -1061,6 +1068,20 @@ class Scheduler {
       .sort((a, b) => (when(b) > when(a) ? 1 : when(b) < when(a) ? -1 : 0));
     const next = candidates.find((j) => when(j) < when(current)) || candidates[0] || null;
     return { jobId: next ? next.Id : null, remaining: candidates.length };
+  }
+
+  // Once per job: videos imported from a channel/playlist before oEmbed titles got the listing's
+  // auto-translated title; fetch the original, one video a second, in the background.
+  async recheckImportedTitles() {
+    for (const job of this.store.jobs.filter((j) => j.SourceKind && !j.TitleChecked)) {
+      if (!this.store.get(job.Id)) continue;
+      const found = await this.fetchTitle(job.VideoId).catch(() => '');
+      if (!found) continue; // try again next start
+      if (found !== job.Title) job.Title = found;
+      job.TitleChecked = true;
+      this.store.saveQuiet(job);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
   }
 
   lastOpened(space) {

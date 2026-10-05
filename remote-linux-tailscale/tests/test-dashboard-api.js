@@ -440,6 +440,25 @@ async function testNewVideoCounts() {
   assert.deepStrictEqual(peek.ids, ['P3xxxxxxxxx', 'P4xxxxxxxxx']);
 }
 
+// Imported videos get the original title from oEmbed instead of the listing's auto-translated
+// one, and older imports are corrected once in the background.
+async function testImportedTitles() {
+  const store = new JobStore(tmpDir());
+  const originals = { T1xxxxxxxxx: 'כותרת מקורית', T2xxxxxxxxx: 'עוד כותרת' };
+  const scheduler = new Scheduler({ store, runner: controllableRunner().runner,
+    fetchTitle: async (id) => originals[id] || '',
+    listVideos: async (url) => ({ kind: 'channel', url, title: 'C', videos: [{ videoId: 'T1xxxxxxxxx', title: 'Translated title', durationSeconds: 0 }] }) });
+  await handleApi(scheduler, 'POST', '/api/import', { url: 'https://www.youtube.com/@c/videos', limit: 1, summaryLevel: 'reg' });
+  await tick(); await tick();
+  const imported = store.jobs.find((j) => j.VideoId === 'T1xxxxxxxxx');
+  assert.strictEqual(imported.Title, 'כותרת מקורית');
+  assert.strictEqual(imported.TitleChecked, true);
+  const old = await add(scheduler, 'T2xxxxxxxxx');
+  Object.assign(old, { Title: 'Old translated', SourceKind: 'channel', TitleChecked: undefined });
+  await scheduler.recheckImportedTitles();
+  assert.strictEqual(old.Title, 'עוד כותרת', 'an older import is corrected');
+}
+
 async function testSearch() {
   const { findMatches, buildPassages } = require('../search');
   assert.strictEqual(findMatches('הַלּוּלָב והלולב', 'לולב').length, 2, 'vowel marks are ignored');
@@ -828,6 +847,7 @@ module.exports = async function run() {
   await testServerRoutes();
   await testImportList();
   await testNewVideoCounts();
+  await testImportedTitles();
   await testSearch();
   await testBrowserRecycling();
   await testParallel();
