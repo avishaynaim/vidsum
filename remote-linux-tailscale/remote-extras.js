@@ -251,8 +251,11 @@
   // How far through the text you are; lives in the bar so it never covers the text (the start of
   // a Hebrew line is on the right, where the rail is).
   const readPercent = el('span', { className: 'autoscroll-percent', title: 'How far through the text you are' }, '0%');
-  const autoBar = el('div', { className: 'autoscroll-bar' }, playButton, slower, speedLabel, faster, nextSection, readPercent);
-  viewer.append(autoBar);
+  const nextUnread = el('button', { type: 'button', title: 'Next summary you have not finished' }, ...label('⏭', 'Next unread'));
+  const autoBar = el('div', { className: 'autoscroll-bar' }, playButton, slower, speedLabel, faster, nextSection, nextUnread, readPercent);
+  // At the end of a summary while auto-scrolling: a short countdown, then the next unread one.
+  const nextBanner = el('div', { className: 'next-banner', hidden: true });
+  viewer.append(nextBanner, autoBar);
   const showSpeed = () => { speedLabel.replaceChildren(el('span', { className: 'lbl' }, 'Speed '), String(speedIndex + 1)); };
   showSpeed();
   const atEnd = () => viewerBody.scrollTop >= viewerBody.scrollHeight - viewerBody.clientHeight - 1;
@@ -264,9 +267,11 @@
     // ahead by the time lost: a jump is what made reading hard.
     const dt = lastTime ? Math.min(0.05, (time - lastTime) / 1000) : 0;
     lastTime = time;
+    // The text was moved by something else (resuming a place, the rail, Next section): go on from there.
+    if (Math.abs(viewerBody.scrollTop - position) > 2) position = viewerBody.scrollTop;
     position += SPEEDS[speedIndex] * dt;
     viewerBody.scrollTop = position;
-    if (atEnd()) { setPlaying(false); return; }
+    if (atEnd()) { setPlaying(false); offerNext(); return; }
     frame = requestAnimationFrame(step);
   }
   function kick() {
@@ -306,6 +311,50 @@
     viewerBody.scrollTo({ top: next ? viewerBody.scrollTop + next.getBoundingClientRect().top - top : viewerBody.scrollHeight, behavior: 'smooth' });
     if (playing) { heldByTouch = true; clearTimeout(resumeTimer); resumeTimer = setTimeout(() => { heldByTouch = false; kick(); }, 1200); }
   });
+  // ⏭ Next unread: the next summary in this dashboard not read to the end (server picks it).
+  let nextCountdown = null;
+  function cancelNext() {
+    if (nextCountdown) clearInterval(nextCountdown);
+    nextCountdown = null;
+    nextBanner.hidden = true;
+  }
+  async function goNextUnread(keepPlaying) {
+    cancelNext();
+    const current = viewer.dataset.jobId;
+    let next;
+    try { next = await post('/api/next-unread', { jobId: current }); } catch (error) { showBanner(`Could not find the next summary: ${error.message}`); return; }
+    if (!next.jobId) { showBanner('No unread summaries left here 🎉'); return; }
+    await openViewer(next.jobId);
+    if (keepPlaying) setPlaying(true);
+  }
+  function showBanner(text, ...buttons) {
+    nextBanner.replaceChildren(el('span', {}, text), ...buttons);
+    nextBanner.hidden = false;
+    if (!buttons.length) setTimeout(() => { if (!nextCountdown) nextBanner.hidden = true; }, 4000);
+  }
+  async function offerNext() {
+    const current = viewer.dataset.jobId;
+    let next;
+    try { next = await post('/api/next-unread', { jobId: current }); } catch { return; }
+    if (viewer.dataset.jobId !== current || !viewer.open) return;
+    if (!next.jobId) { showBanner('That was the last unread summary here 🎉'); return; }
+    let left = 5;
+    const stay = el('button', { type: 'button' }, 'Stay here');
+    const go = el('button', { type: 'button', className: 'primary' }, 'Next now');
+    stay.addEventListener('click', cancelNext);
+    go.addEventListener('click', () => goNextUnread(true));
+    const text = () => `Done ✓ Next unread summary in ${left} s (${next.remaining} left)`;
+    showBanner(text(), stay, go);
+    nextCountdown = setInterval(() => {
+      left -= 1;
+      if (left <= 0) { goNextUnread(true); return; }
+      nextBanner.firstChild.textContent = text();
+    }, 1000);
+  }
+  nextUnread.addEventListener('click', () => goNextUnread(playing));
+  viewer.addEventListener('close', cancelNext);
+  viewerBody.addEventListener('touchstart', () => { if (nextCountdown) cancelNext(); }, { passive: true });
+
   // A finger (or mouse wheel) on the text takes over; auto-scroll continues after it lets go.
   const hold = () => { if (!playing) return; heldByTouch = true; clearTimeout(resumeTimer); };
   const release = () => {
@@ -563,6 +612,10 @@
 
   // focus (from search): { ranges: { sectionKey: [[s, e]...] }, key, hit } scrolls to one match.
   async function openViewer(jobId, focus = null) {
+    if (readTrack && readTrack.jobId !== jobId) saveReadPos(); // moving on from another summary
+    if (viewer.open && history.state && history.state.dialog === viewer.id) {
+      history.replaceState(history.state, '', `${location.pathname}#summary=${jobId}`); // Back still closes it
+    }
     viewerTitle.textContent = 'Loading…';
     viewerMeta.textContent = '';
     viewerBody.replaceChildren();

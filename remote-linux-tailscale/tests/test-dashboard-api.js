@@ -749,6 +749,19 @@ async function testReadMarks() {
   await handleApi(scheduler, 'POST', '/api/details', { jobId: other.Id });
   assert.strictEqual(scheduler.lastOpened('torah').Id, other.Id, 'the latest one opened');
   assert.strictEqual(scheduler.lastOpened('general'), null, 'per dashboard');
+
+  // "Next unread": older finished summaries first, skipping read ones, wrapping to the newest.
+  const mk = async (id, completedAt, extra = {}) => {
+    const j = await add(scheduler, id);
+    Object.assign(j, { State: 'completed', FinalResult: 'local', CompletedAt: completedAt, ...extra });
+    return j;
+  };
+  const a = await mk('AAAAAAAAAAA', '2026-01-03T00:00:00Z');
+  const b = await mk('BBBBBBBBBBB', '2026-01-02T00:00:00Z', { ReadAt: '2026-01-05T00:00:00Z' });
+  const c = await mk('CCCCCCCCCCC', '2026-01-01T00:00:00Z');
+  assert.strictEqual(scheduler.nextUnread(a.Id).jobId, c.Id, 'the read one is skipped');
+  assert.strictEqual(scheduler.nextUnread(c.Id).jobId, a.Id, 'after the oldest it wraps to the newest');
+  assert.strictEqual((await handleApi(scheduler, 'POST', '/api/next-unread', { jobId: a.Id })).remaining, 1);
 }
 
 // "📜 Full transcript": the scheduler hands back the video's transcript, and a failure is a

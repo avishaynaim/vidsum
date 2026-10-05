@@ -1017,6 +1017,20 @@ class Scheduler {
     this.store.saveQuiet(job); // not an update: the "Last updated" order stays
   }
 
+  // The viewer's "next unread": in the same dashboard, the next summary not read to the end,
+  // newest-finished first (the order the list shows by default), after the current one,
+  // wrapping around to the newest.
+  nextUnread(currentId) {
+    const current = this.find(currentId);
+    const when = (j) => j.CompletedAt || j.UpdatedAt || '';
+    const candidates = this.store.jobs
+      .filter(inSpace(spaceOf(current)))
+      .filter((j) => j.Id !== current.Id && j.State === 'completed' && !j.ReadAt && j.FinalResult === 'local')
+      .sort((a, b) => (when(b) > when(a) ? 1 : when(b) < when(a) ? -1 : 0));
+    const next = candidates.find((j) => when(j) < when(current)) || candidates[0] || null;
+    return { jobId: next ? next.Id : null, remaining: candidates.length };
+  }
+
   lastOpened(space) {
     let last = null;
     for (const job of this.store.jobs.filter(inSpace(space))) {
@@ -1202,6 +1216,7 @@ async function handleApi(scheduler, method, pathname, body, space = null) {
     case '/api/transcript': return scheduler.transcript(body.jobId);
     case '/api/mark-read': return scheduler.markRead(body.jobId, body.read === undefined ? true : body.read);
     case '/api/read-pos': return scheduler.setReadPos(body.jobId, body.pos);
+    case '/api/next-unread': return scheduler.nextUnread(body.jobId);
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
     case '/api/details': scheduler.markOpened(body.jobId); return scheduler.details(body.jobId);
     case '/api/import': return scheduler.importList(body, space);

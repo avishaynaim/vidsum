@@ -355,3 +355,10 @@ body.hide-read .job-card.is-read { display: none; }
 /* ⏸ Pause all / ▶ Resume all in the top bar. */
 #topbar-pause { font-weight: 750; }
 #topbar-pause.paused { background: #f59e0b; color: #0b111a; border-color: #f59e0b; }
+
+/* The viewer's "next unread" countdown, just above the auto-scroll bar. */
+#summary-viewer .next-banner { position: absolute; left: 10px; right: 10px; bottom: 64px; z-index: 8; display: flex; flex-wrap: wrap;
+  align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--accent);
+  box-shadow: 0 6px 24px rgba(0,0,0,.35); font-size: 14px; }
+#summary-viewer .next-banner[hidden] { display: none; }
+#summary-viewer .next-banner span { flex: 1 1 12em; }
