@@ -1216,7 +1216,7 @@
       ? `Not set up on the server (missing ${status.whisperMissing}); videos with no captions fail as before.`
       : status.whisperEngine === 'modal'
       ? 'A video with no captions is transcribed through NotebookLM (about 2 minutes). Only if that fails, Whisper ' +
-        'transcribes it on a free cloud GPU (Modal): a couple of minutes per hour of audio, nothing heavy on this server.'
+        'transcribes it in the cloud on Modal\'s free tier: all parts at once, usually 3-5 minutes, nothing heavy on this server.'
       : 'A video with no captions is transcribed through NotebookLM (about 2 minutes). Only if that fails, Whisper ' +
         'transcribes it on this server, and this machine is far too slow for it: measured over 30× the video length ' +
         '(a 1-hour video takes a day or more, with 3 of the 4 cores busy). Best left off here.';

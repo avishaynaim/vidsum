@@ -6,8 +6,9 @@
 // transcribe it with Whisper (large-v3-turbo; Hebrew by default).
 //
 // Two engines:
-//   - modal (preferred): a GPU on Modal's free tier, see modal-whisper/. Only a small audio file
-//     leaves this box; an hour of audio takes a couple of minutes. Used when ~/.modal.toml exists.
+//   - modal (preferred): Modal's free tier (CPU; GPUs need a card on file), see modal-whisper/.
+//     The audio is cut into 5-minute pieces transcribed in parallel, so even a long video takes a
+//     few minutes and nothing heavy runs here. Used when ~/.modal.toml exists.
 //   - local: whisper.cpp on this box. It is a 4-core Celeron J4125 without AVX, so that is 30-60x
 //     slower than the audio itself.
 // WHISPER_ENGINE=modal|local forces one. Either way: one transcription at a time (a second video
@@ -106,7 +107,7 @@ async function transcribeWithWhisper(videoId, { onStatus = () => {}, findYtDlp, 
         `https://www.youtube.com/watch?v=${videoId}`], { timeoutMs: 30 * 60 * 1000, signal });
       audio = path.join(dir, fs.readdirSync(dir).find((f) => f.startsWith('audio.')));
     }
-    if (engine === 'modal') return { ...await transcribeOnModal(audio, dir, paths.language, { onStatus, signal }), title: videoId };
+    if (engine === 'modal') return { ...await transcribeOnModal(audio, paths.language, { onStatus, signal }), title: videoId };
     const wav = path.join(dir, 'audio.wav');
     await run('ffmpeg', ['-loglevel', 'error', '-y', '-i', audio, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav],
       { timeoutMs: 30 * 60 * 1000, signal });
@@ -132,14 +133,11 @@ async function transcribeWithWhisper(videoId, { onStatus = () => {}, findYtDlp, 
   }
 }
 
-// Sends a 16 kHz mono Opus copy (~11 MB per hour) to the Modal app and returns its text.
-async function transcribeOnModal(audio, dir, language, { onStatus, signal }) {
-  const small = path.join(dir, 'audio.ogg');
-  await run('ffmpeg', ['-loglevel', 'error', '-y', '-i', audio, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'libopus', '-b:a', '24k', small],
-    { timeoutMs: 30 * 60 * 1000, signal });
-  onStatus('Speech-to-text on a cloud GPU (Whisper on Modal): uploading, then about 1-3 minutes per hour of audio...');
+// Sends the audio to the Modal app (client.py cuts it into 5-minute pieces that run in parallel).
+async function transcribeOnModal(audio, language, { onStatus, signal }) {
+  onStatus('Speech-to-text in the cloud (Whisper on Modal): all parts at once, usually 3-5 minutes...');
   let out = '';
-  await run(path.join(MODAL_DIR, '.venv', 'bin', 'python'), [path.join(MODAL_DIR, 'client.py'), small, language], {
+  await run(path.join(MODAL_DIR, '.venv', 'bin', 'python'), [path.join(MODAL_DIR, 'client.py'), audio, language], {
     timeoutMs: 75 * 60 * 1000, signal, onStdout: (chunk) => { out += chunk; },
   });
   const result = JSON.parse(out.trim().split('\n').pop());
