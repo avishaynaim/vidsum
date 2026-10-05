@@ -1010,6 +1010,21 @@ class Scheduler {
     return { jobId: job.Id, ReadAt: job.ReadAt };
   }
 
+  // The summary viewer opened this job: /torah/last and /general/last reopen the latest one.
+  markOpened(id) {
+    const job = this.find(id);
+    job.OpenedAt = now();
+    this.store.saveQuiet(job); // not an update: the "Last updated" order stays
+  }
+
+  lastOpened(space) {
+    let last = null;
+    for (const job of this.store.jobs.filter(inSpace(space))) {
+      if (job.OpenedAt && (!last || job.OpenedAt > last.OpenedAt)) last = job;
+    }
+    return last;
+  }
+
   // Where the reader stopped in the summary viewer, 0 (top) .. 1 (end). A summary only counts as
   // read once the reader reaches its end (the page then calls markRead); until then reopening it
   // continues from here.
@@ -1188,7 +1203,7 @@ async function handleApi(scheduler, method, pathname, body, space = null) {
     case '/api/mark-read': return scheduler.markRead(body.jobId, body.read === undefined ? true : body.read);
     case '/api/read-pos': return scheduler.setReadPos(body.jobId, body.pos);
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
-    case '/api/details': return scheduler.details(body.jobId);
+    case '/api/details': scheduler.markOpened(body.jobId); return scheduler.details(body.jobId);
     case '/api/import': return scheduler.importList(body, space);
     case '/api/search': return scheduler.search(body, space);
     case '/api/searches/save': return scheduler.saveSearchEntry(body, space);

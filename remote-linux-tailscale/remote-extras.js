@@ -1283,6 +1283,12 @@
   });
   const topState = document.querySelector('.topbar #state');
   if (topState) topIp.before(searchButton);
+  // ↩ Continue: the summary last opened in this dashboard, at its saved place (server: /<space>/last).
+  const space = location.pathname.split('/')[1];
+  if (topState && (space === 'torah' || space === 'general')) {
+    searchButton.before(el('a', { id: 'topbar-continue', className: 'bookmark', href: `/${space}/last`,
+      title: 'Open the summary you read last, where you stopped' }, '↩ Continue'));
+  }
   const clearFailed = document.querySelector('#clear-errors');
   if (clearFailed) clearFailed.before(retryFailed);
   refreshFailed();

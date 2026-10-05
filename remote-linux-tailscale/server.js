@@ -250,6 +250,9 @@ function sendPage(res, content, type = 'text/html; charset=utf-8', extraHeaders 
 
 // The two dashboards (see SPACES in dashboard-api.js), each at /<space>.
 const DASHBOARD_PATHS = ['/torah', '/general'];
+// "Continue reading": the summary last opened in that dashboard, at its saved place.
+const RESUME_PATHS = ['/torah/last', '/general/last'];
+const LOGIN_NEXT = [...DASHBOARD_PATHS, ...RESUME_PATHS];
 
 // '/': choose a dashboard. A #videos=/#video= link from an old bookmark is passed on to the
 // chosen one, so nothing it carried is lost.
@@ -284,7 +287,7 @@ button{background:#2563eb;color:white;border:0;font-weight:700}.error{color:#fca
 <body><h1>YT Summary Remote</h1><form method="post" action="/login">
 <label for="token">Access key</label>
 <input id="token" name="token" type="password" required autocomplete="current-password" autofocus>
-<input type="hidden" name="next" id="next" value="${DASHBOARD_PATHS.includes(next) ? next : ''}">
+<input type="hidden" name="next" id="next" value="${LOGIN_NEXT.includes(next) ? next : ''}">
 ${failed ? '<p class="error">Wrong key, try again.</p>' : ''}
 <button>Enter</button></form>
 <script>
@@ -434,7 +437,7 @@ function createServer({
         const form = new URLSearchParams(await readBody(req, 4096));
         const supplied = (form.get('token') || '').trim();
         if (!keyMatches(token, supplied)) { sendLogin(res, true, form.get('next')); return; }
-        const next = DASHBOARD_PATHS.includes(form.get('next')) ? form.get('next') : '/';
+        const next = LOGIN_NEXT.includes(form.get('next')) ? form.get('next') : '/';
         res.writeHead(303, { Location: next, 'Set-Cookie': sessionCookie(supplied), 'Cache-Control': 'no-store' });
         res.end();
         return;
@@ -489,12 +492,23 @@ function createServer({
       }
 
       const denied = checkAccess(req, url, token);
-      if (denied && denied.status === 401 && ['/', '/simple', ...DASHBOARD_PATHS].includes(url.pathname) && req.method === 'GET') {
+      if (denied && denied.status === 401 && ['/', '/simple', ...LOGIN_NEXT].includes(url.pathname) && req.method === 'GET') {
         sendLogin(res, url.searchParams.has('token'));
         return;
       }
       if (denied) {
         sendJson(res, denied.status, { error: denied.error });
+        return;
+      }
+
+      if (RESUME_PATHS.includes(url.pathname) && req.method === 'GET') {
+        const space = url.pathname.split('/')[1];
+        const last = scheduler.lastOpened(space);
+        // The page opens #summary=<id> in the viewer, which resumes the saved place.
+        const supplied = url.searchParams.get('token');
+        const query = supplied ? `?token=${encodeURIComponent(supplied)}` : '';
+        res.writeHead(302, { Location: `/${space}${query}${last ? `#summary=${last.Id}` : ''}`, 'Cache-Control': 'no-store' });
+        res.end();
         return;
       }
 

@@ -739,6 +739,16 @@ async function testReadMarks() {
   assert.strictEqual(job.ReadPos, 0.123, 'reading it to the end keeps the position');
   await handleApi(scheduler, 'POST', '/api/mark-read', { jobId: job.Id, read: false });
   assert.strictEqual(job.ReadPos, null, 'unread again starts from the top');
+
+  // "Continue reading": the summary last opened in each dashboard (space).
+  const other = await add(scheduler, 'NNNNNNNNNNN');
+  const beforeOpen = job.UpdatedAt;
+  await handleApi(scheduler, 'POST', '/api/details', { jobId: job.Id });
+  assert.strictEqual(job.UpdatedAt, beforeOpen, 'opening is not an update');
+  await new Promise((r) => setTimeout(r, 5));
+  await handleApi(scheduler, 'POST', '/api/details', { jobId: other.Id });
+  assert.strictEqual(scheduler.lastOpened('torah').Id, other.Id, 'the latest one opened');
+  assert.strictEqual(scheduler.lastOpened('general'), null, 'per dashboard');
 }
 
 // "📜 Full transcript": the scheduler hands back the video's transcript, and a failure is a

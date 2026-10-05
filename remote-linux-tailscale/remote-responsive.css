@@ -146,7 +146,8 @@
 #sources-block .new-total[hidden] { display: none; }
 
 /* ---- Search in summaries ---- */
-#topbar-search { padding: 4px 12px; border-radius: 999px; font-size: 12.5px; white-space: nowrap; }
+#topbar-search, #topbar-continue { padding: 4px 12px; border-radius: 999px; font-size: 12.5px; white-space: nowrap; }
+#topbar-continue { text-decoration: none; }
 #search-dialog {
   width: min(1100px, 94vw); height: 92vh; max-height: 92vh; padding: 0;
   background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius);
