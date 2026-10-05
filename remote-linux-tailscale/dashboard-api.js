@@ -92,6 +92,12 @@ class JobStore {
 
   save(job) {
     job.UpdatedAt = now();
+    this.saveQuiet(job);
+  }
+
+  // Without touching UpdatedAt: the reading position changes all the time while reading and must
+  // not reorder the "Last updated" list.
+  saveQuiet(job) {
     atomicWrite(path.join(this.dir, `${job.Id}.json`), JSON.stringify(job));
   }
 
@@ -992,10 +998,23 @@ class Scheduler {
     const job = this.find(id);
     const changed = !!job.ReadAt !== read;
     job.ReadAt = read ? (job.ReadAt || now()) : null;
+    if (!read) job.ReadPos = null; // unread again: the next open starts from the top
     // Read / unread is a status change, so it counts as an update ("Last updated" sort);
     // opening an already-read summary again changes nothing.
     if (changed) this.store.save(job);
     return { jobId: job.Id, ReadAt: job.ReadAt };
+  }
+
+  // Where the reader stopped in the summary viewer, 0 (top) .. 1 (end). A summary only counts as
+  // read once the reader reaches its end (the page then calls markRead); until then reopening it
+  // continues from here.
+  setReadPos(id, pos) {
+    const value = Number(pos);
+    if (!Number.isFinite(value) || value < 0 || value > 1) throw new ApiError(400, 'pos must be a number from 0 to 1.');
+    const job = this.find(id);
+    job.ReadPos = Math.round(value * 1000) / 1000;
+    this.store.saveQuiet(job);
+    return { jobId: job.Id, ReadPos: job.ReadPos };
   }
 
   details(id) {
@@ -1016,7 +1035,7 @@ class Scheduler {
     }
     return {
       id: job.Id, videoId: job.VideoId, title: job.Title, level: job.SummaryLevel, state: job.State,
-      message: job.Message, final, parts,
+      message: job.Message, final, parts, readAt: job.ReadAt || null, readPos: job.ReadPos || 0,
       source: job.SourceTitle ? { kind: job.SourceKind, title: job.SourceTitle, url: job.SourceUrl } : null,
     };
   }
@@ -1162,6 +1181,7 @@ async function handleApi(scheduler, method, pathname, body, space = null) {
     case '/api/resummarize': return scheduler.resummarize(body.jobId, body.summaryLevel);
     case '/api/transcript': return scheduler.transcript(body.jobId);
     case '/api/mark-read': return scheduler.markRead(body.jobId, body.read === undefined ? true : body.read);
+    case '/api/read-pos': return scheduler.setReadPos(body.jobId, body.pos);
     case '/api/attach-result': return scheduler.attachResult(body.jobId, body.resultUrl);
     case '/api/details': return scheduler.details(body.jobId);
     case '/api/import': return scheduler.importList(body, space);

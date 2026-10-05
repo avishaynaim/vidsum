@@ -185,14 +185,15 @@
   const closeViewer = el('button', { className: 'viewer-close', type: 'button', ariaLabel: 'Close' }, '✕');
   closeViewer.addEventListener('click', () => viewer.close());
   viewer.addEventListener('click', (event) => { if (event.target === viewer) viewer.close(); }); // backdrop
-  // Opening a summary marks it read; this cancels that (and marks it read again if pressed again).
-  const viewerRead = el('button', { type: 'button', className: 'viewer-read', title: 'Opening a summary marks it read; this cancels that' });
+  // Reaching the end of a summary marks it read; this button sets it by hand either way.
+  const viewerRead = el('button', { type: 'button', className: 'viewer-read', title: 'Reaching the end marks a summary read; this sets it by hand' });
   const showViewerRead = (isRead) => { viewerRead.dataset.read = isRead ? '1' : ''; viewerRead.textContent = isRead ? '↺ Mark as unread' : '✓ Mark as read'; };
   viewerRead.addEventListener('click', () => {
     const jobId = viewer.dataset.jobId;
     if (!jobId) return;
     const toRead = !viewerRead.dataset.read;
     markRead(jobId, toRead);
+    if (readTrack && readTrack.jobId === jobId) { readTrack.read = toRead; if (!toRead) readTrack.saved = 0; }
     if (!toRead) pendingReadNote = false; // no "Marked as read" note when it closes
     showViewerRead(toRead);
   });
@@ -346,6 +347,48 @@
   });
   viewer.addEventListener('close', () => { if (eyeSession) eyeSession.stop(); });
 
+  // ---- Reading position: a summary counts as read only once its end is reached. ----
+  // Where you stopped (0..1 of the scrollable text) is saved on the server while you scroll and
+  // when the viewer closes, so reopening it - on any device - continues from there.
+  let readTrack = null; // { jobId, read, saved, pos, timer }
+  const readPosNow = () => {
+    const scrollable = viewerBody.scrollHeight - viewerBody.clientHeight;
+    return scrollable > 4 ? Math.min(1, Math.max(0, viewerBody.scrollTop / scrollable)) : 1;
+  };
+  const atTextEnd = () => viewerBody.scrollTop >= viewerBody.scrollHeight - viewerBody.clientHeight - 24;
+  function saveReadPos() {
+    const t = readTrack;
+    if (!t) return;
+    clearTimeout(t.timer);
+    // The last position measured while the viewer was open: once it closes the text has no
+    // height and would read as "the end".
+    const pos = Math.round(t.pos * 1000) / 1000;
+    if (Math.abs(pos - t.saved) < 0.01) return;
+    t.saved = pos;
+    post('/api/read-pos', { jobId: t.jobId, pos }).catch(() => {}); // a lost position is harmless
+  }
+  function checkReadEnd() {
+    const t = readTrack;
+    if (!t || t.read || !atTextEnd()) return;
+    t.read = true;
+    markRead(t.jobId, true);
+    showViewerRead(true);
+  }
+  function startReadTracking(jobId, read, saved) {
+    if (viewer.dataset.jobId !== jobId || !viewer.open) return;
+    readTrack = { jobId, read, saved, pos: readPosNow(), timer: null };
+    checkReadEnd(); // a summary short enough to fit on the screen is read at once
+  }
+  viewerBody.addEventListener('scroll', () => {
+    const t = readTrack;
+    if (!t) return;
+    t.pos = readPosNow();
+    checkReadEnd();
+    clearTimeout(t.timer);
+    t.timer = setTimeout(() => saveReadPos(), 1200);
+  }, { passive: true });
+  viewer.addEventListener('close', () => { saveReadPos(); readTrack = null; });
+
   let labelTimer;
   function updateRail() {
     const { scrollTop, scrollHeight, clientHeight } = viewerBody;
@@ -493,8 +536,8 @@
     viewer.dataset.jobId = jobId;
     if (!viewer.open) viewer.showModal();
     viewerBody.focus({ preventScroll: true }); // keys scroll the text, not press the first button
-    markRead(jobId);
-    showViewerRead(true);
+    readTrack = null; // nothing is tracked until the text is in place (scrollTop jumps while loading)
+    showViewerRead(false);
     try {
       const d = await post('/api/details', { jobId });
       viewerTitle.textContent = d.title || d.videoId;
@@ -516,6 +559,16 @@
       blocks.push(transcriptBlock(jobId, d.level));
       viewerBody.replaceChildren(...blocks);
       viewerBody.scrollTop = 0;
+      showViewerRead(!!d.readAt);
+      // An unfinished summary continues where it was left (a finished one starts at the top).
+      const resumeAt = !d.readAt && !(focus && focus.key) && d.readPos > 0.01 && d.readPos < 1 ? d.readPos : 0;
+      if (resumeAt) {
+        requestAnimationFrame(() => {
+          viewerBody.scrollTop = resumeAt * Math.max(0, viewerBody.scrollHeight - viewerBody.clientHeight);
+          showToast(`Continuing where you stopped (${Math.round(resumeAt * 100)}%)`, false);
+        });
+      }
+      requestAnimationFrame(() => requestAnimationFrame(() => startReadTracking(jobId, !!d.readAt, resumeAt)));
       if (focus && focus.key) {
         const section = viewerBody.querySelector(`.viewer-section[data-key="${focus.key}"]`);
         const mark = section && section.querySelector(`mark[data-hit="${focus.hit || 0}"]`);
@@ -922,13 +975,11 @@
     const card = event.target.closest('.job-card[data-job-id]');
     if (!card) return;
     const control = event.target.closest('button, a, select, input, label, summary, textarea');
-    // "Open summary" and the links into the AI sites (final summary, each part) also count as read.
-    if (control && (/^\s*Open summary/.test(control.textContent) || control.matches('.ai-links a'))) markRead(card.dataset.jobId);
     if (control) return;
     openViewer(card.dataset.jobId);
   });
 
-  // ---- Read marks: a tile whose summary was opened is dimmed with "✓ Read" (app.js render,
+  // ---- Read marks: a tile whose summary was read to the end is dimmed with "✓ Read" (app.js render,
   // patched in remote-dashboard.js), so the same summary is not opened twice by accident. ----
   // Ctrl+Z / ⌘Z (outside text boxes) cancels the last "read" (from reading a summary or the
   // Mark as read button), back to unread; the note shown when a summary closes has the same

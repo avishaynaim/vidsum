@@ -722,6 +722,23 @@ async function testReadMarks() {
   assert.strictEqual(onDisk.ReadAt, marked.ReadAt, 'saved, so every device sees it');
   await handleApi(scheduler, 'POST', '/api/mark-read', { jobId: job.Id, read: false });
   assert.strictEqual(job.ReadAt, null);
+
+  // Reading position: saved quietly (no "Last updated" change), returned with the details,
+  // and cleared when the summary is marked unread.
+  const beforePos = job.UpdatedAt;
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepStrictEqual(await handleApi(scheduler, 'POST', '/api/read-pos', { jobId: job.Id, pos: 0.12345 }), { jobId: job.Id, ReadPos: 0.123 });
+  assert.strictEqual(job.UpdatedAt, beforePos, 'scrolling does not reorder the list');
+  assert.strictEqual(JSON.parse(require('fs').readFileSync(require('path').join(dir, `${job.Id}.json`), 'utf8')).ReadPos, 0.123);
+  const details = await handleApi(scheduler, 'POST', '/api/details', { jobId: job.Id });
+  assert.strictEqual(details.readPos, 0.123);
+  assert.strictEqual(details.readAt, null, 'a position alone is not "read"');
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/read-pos', { jobId: job.Id, pos: 1.5 }), (e) => e.status === 400);
+  await assert.rejects(handleApi(scheduler, 'POST', '/api/read-pos', { jobId: job.Id, pos: 'x' }), (e) => e.status === 400);
+  await handleApi(scheduler, 'POST', '/api/mark-read', { jobId: job.Id });
+  assert.strictEqual(job.ReadPos, 0.123, 'reading it to the end keeps the position');
+  await handleApi(scheduler, 'POST', '/api/mark-read', { jobId: job.Id, read: false });
+  assert.strictEqual(job.ReadPos, null, 'unread again starts from the top');
 }
 
 // "📜 Full transcript": the scheduler hands back the video's transcript, and a failure is a

@@ -126,7 +126,7 @@ const SCRIPT_REPLACEMENTS = [
     "          const o = document.createElement('option'); o.value = k; o.textContent = levels[k].label; return o; }));\n" +
     "      }"],
   // Read marks (remote-extras.js markRead): a read tile is dimmed and says "✓ Read <date>",
-  // with "Mark unread" to undo.
+  // with "Mark unread" to undo; a summary started but not finished says "📖 <how far>%".
   ["      row.state.textContent = job.State + (job.WatchLater ? ' · Watch later' : '');",
     "      row.state.textContent = job.State + (job.WatchLater ? ' · Watch later' : '');\n" +
     "      if (!row.read) {\n" +
@@ -138,8 +138,9 @@ const SCRIPT_REPLACEMENTS = [
     "        row.levelSelect.parentNode.prepend(row.readToggle);\n" +
     "      }\n" +
     "      row.readJobId = job.Id; row.readIsRead = !!job.ReadAt;\n" +
-    "      row.read.hidden = !job.ReadAt;\n" +
+    "      row.read.hidden = !job.ReadAt && !(job.ReadPos > 0.01);\n" +
     "      if (job.ReadAt) row.read.textContent = '✓ Read ' + new Date(job.ReadAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });\n" +
+    "      else if (job.ReadPos > 0.01) row.read.textContent = '📖 ' + Math.round(job.ReadPos * 100) + '%';\n" +
     "      row.readToggle.hidden = job.State !== 'completed' && !job.ReadAt;\n" +
     "      row.readToggle.textContent = job.ReadAt ? '↺ Mark as unread' : '✓ Mark as read';\n" +
     "      row.element.classList.toggle('is-read', !!job.ReadAt);"],
