@@ -50,6 +50,13 @@ const SCRIPT_REPLACEMENTS = [
   ["'Showing the last known jobs and history. The helper is not running, so active work is no longer progressing and actions are disabled until restart.'",
     "'Showing the last known jobs and history. The server is unreachable right now (for example during an IP change); this page reconnects by itself.'"],
   ["'Open Start YT Summary.cmd to resume the controller. '", "'Waiting for the server to answer again. '"],
+  // Over mobile data one status answer can miss the 8 s timeout; that used to flip the whole page
+  // to "offline" and disable every action (Open summary too). Only 3 failures in a row count.
+  ["  async function poll() {", "  let pollFailures = 0;\n  async function poll() {"],
+  ["      const data = await request('/api/status');\n      setControllerAvailability(true);",
+    "      const data = await request('/api/status');\n      pollFailures = 0;\n      setControllerAvailability(true);"],
+  ["    } catch (error) {\n      setControllerAvailability(false,",
+    "    } catch (error) {\n      if (++pollFailures < 3) return; // the finally block still schedules the next poll\n      setControllerAvailability(false,"],
   ["'Stop active workers and close the dedicated browser? Unstarted jobs stay queued for the next launch. Your regular browser stays open.'",
     "'Stop all work? The running video stops after its current step and keeps its progress. Queued videos wait until you start them again.'"],
   ["'The helper was stopped from this dashboard. The last known jobs and history remain visible.'",

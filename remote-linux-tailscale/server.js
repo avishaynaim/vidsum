@@ -41,6 +41,7 @@
 // the single launched Chrome. An IP rotation holds the queue so no job starts mid-reconnect.
 
 const http = require('http');
+const zlib = require('zlib');
 const net = require('net');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -219,11 +220,15 @@ async function signInStatus() {
 }
 
 function sendJson(res, status, body, extraHeaders = {}) {
-  const payload = JSON.stringify(body);
+  let payload = Buffer.from(JSON.stringify(body));
+  // The status poll is ~270 KB every 1.5 s; gzip makes it ~10x smaller for phones on mobile data.
+  const gzip = res.acceptsGzip && payload.length > 2048;
+  if (gzip) payload = zlib.gzipSync(payload, { level: 5 });
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(payload),
+    'Content-Length': payload.length,
     'Cache-Control': 'no-store',
+    ...(gzip ? { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' } : {}),
     ...extraHeaders,
   });
   res.end(payload);
@@ -412,6 +417,7 @@ function createServer({
   const thumbs = new Thumbs(store.dir);
 
   const server = http.createServer(async (req, res) => {
+    res.acceptsGzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
     try {
       const url = new URL(req.url, 'http://localhost');
 

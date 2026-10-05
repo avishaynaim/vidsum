@@ -956,7 +956,12 @@
       if (viewer.open) pendingReadNote = true; // shown when the summary closes
       else showToast('Marked as read', true);
     }
-    return post('/api/mark-read', { jobId, read }).catch(() => {});
+    // Not silent: a failed save (e.g. a moment without connection) puts the mark back and says so.
+    return post('/api/mark-read', { jobId, read }).catch((error) => {
+      if (card) card.classList.toggle('is-read', was);
+      if (viewer.open && viewer.dataset.jobId === jobId) showViewerRead(was);
+      showToast(`Could not save "${read ? 'read' : 'unread'}": ${error.message}. Try again.`, false);
+    });
   }
   let pendingReadNote = false;
   viewer.addEventListener('close', () => { if (pendingReadNote) { pendingReadNote = false; showToast('Marked as read', true); } });
