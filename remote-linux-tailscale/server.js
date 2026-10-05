@@ -55,6 +55,7 @@ const netGuard = require('./net-guard');
 const { JobStore, Scheduler, handleApi } = require('./dashboard-api');
 const { buildDashboard } = require('./remote-dashboard');
 const { Thumbs, handleThumb } = require('./thumbs');
+const { widgetKey, sameKey, widgetCounts, WidgetPush } = require('./widget');
 
 const COOKIE_NAME = 'ytsum_token';
 
@@ -413,6 +414,12 @@ function createServer({
   // Jobs, results and settings persist in stateDir; tests get a throwaway directory.
   const store = new JobStore(stateDir || fs.mkdtempSync(path.join(os.tmpdir(), 'yt-summary-state-')));
   const scheduler = new Scheduler({ store, runner, attachRunner, browserReady, recycleBrowser, log: (msg) => log(msg) });
+  // Android home-screen widget (widget.js): counts on request, pushed to the phone on change.
+  const counts = () => widgetCounts(store.jobs, { paused: scheduler.paused || scheduler.held });
+  const widgetPush = new WidgetPush({ stateDir: store.dir, getCounts: counts, log: (msg) => log(msg) });
+  const widgetTimer = setInterval(() => widgetPush.tick().catch(() => {}), 5000);
+  widgetTimer.unref();
+  const wKey = widgetKey(token);
   const rotation = new IpRotation({ runner: rotatorRunner, queue: scheduler });
   const thumbs = new Thumbs(store.dir);
 
@@ -462,6 +469,25 @@ function createServer({
         return;
       }
 
+      // The widget's own read-only key (widget.js), checked before the dashboard key.
+      if (url.pathname === '/api/widget' || url.pathname === '/api/widget/register') {
+        const remoteAddress = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+        if (!netGuard.isAllowedAddress(remoteAddress)) { sendJson(res, 403, { error: 'Forbidden.' }); return; }
+        const supplied = req.headers['x-widget-key'] || url.searchParams.get('key') || '';
+        if (wKey && !sameKey(wKey, supplied)) { sendJson(res, 401, { error: 'Missing or invalid widget key.' }); return; }
+        if (url.pathname === '/api/widget' && req.method === 'GET') { sendJson(res, 200, { ...counts(), at: new Date().toISOString() }); return; }
+        if (url.pathname === '/api/widget/register' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req, 4096)) || '{}');
+            sendJson(res, 200, widgetPush.register(body.endpoint));
+            log('Android widget registered for push updates.');
+          } catch (err) { sendJson(res, err.status || 400, { error: err.message }); }
+          return;
+        }
+        sendJson(res, 405, { error: 'Method not allowed.' });
+        return;
+      }
+
       const denied = checkAccess(req, url, token);
       if (denied && denied.status === 401 && ['/', '/simple', ...DASHBOARD_PATHS].includes(url.pathname) && req.method === 'GET') {
         sendLogin(res, url.searchParams.has('token'));
@@ -486,6 +512,9 @@ function createServer({
       }
 
       if (url.pathname.startsWith('/thumb/') && req.method === 'GET' && await handleThumb(thumbs, url, res)) return;
+
+      // The dashboard's "Connect the Android widget" link (needs the full dashboard key).
+      if (url.pathname === '/api/widget/setup' && req.method === 'GET') { sendJson(res, 200, { key: wKey }); return; }
 
       // The phone's eye page-turn reports its steps and errors here, so a problem on the phone
       // shows up in this server's log (journalctl --user -u yt-summary).

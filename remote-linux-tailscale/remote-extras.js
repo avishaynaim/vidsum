@@ -67,7 +67,28 @@
     el('div', { className: 'panel-title', style: 'margin-top:12px' }, 'Internet address'),
     el('p', {}, 'Public IP: ', ipValue), ipState, rotate,
     el('p', { className: 'muted' }, 'Reconnects the home router for a new public IP. The server (and this page) is offline for about 1–2 minutes, then reconnects by itself. Not allowed while a video is running.'));
-  panel.append(el('div', { className: 'panel-title' }, 'Remote server'), signInBlock, parallelBlock, whisperBlock, ipBlock);
+  // Android home-screen widget (../android-widget, server side widget.js): install, ntfy, connect.
+  const WIDGET_APK = 'https://github.com/avishaynaim/vidsum/releases/download/widget-latest/yt-summary-widget.apk';
+  const widgetConnect = el('a', { className: 'bookmark', style: 'display:inline-block;margin:4px 0', href: '#' }, '3. Connect the Android widget');
+  const widgetNote = el('p', { className: 'muted' });
+  const widgetBlock = el('div', {},
+    el('div', { className: 'panel-title', style: 'margin-top:12px' }, 'Android widget'),
+    el('p', { className: 'muted' }, 'Running, queued and unread videos on the phone\'s home screen, updated the moment they change. On the phone:'),
+    el('a', { className: 'bookmark', style: 'display:inline-block;margin:4px 6px 4px 0', href: WIDGET_APK }, '1. Install the app'),
+    el('a', { className: 'bookmark', style: 'display:inline-block;margin:4px 6px 4px 0', href: 'https://play.google.com/store/apps/details?id=io.heckel.ntfy', target: '_blank', rel: 'noopener' }, '2. Install ntfy (free)'),
+    widgetConnect, widgetNote);
+  if (location.protocol !== 'https:') {
+    widgetConnect.hidden = true;
+    widgetNote.textContent = 'To connect, open this dashboard on the phone through its https address (the Tailscale Funnel one, port 8443), so the widget can reach it from anywhere.';
+  } else {
+    widgetNote.textContent = 'Then long-press the home screen → Widgets → YT Summary.';
+    api('/api/widget/setup').then(({ key }) => {
+      const q = `server=${encodeURIComponent(location.origin)}&key=${encodeURIComponent(key)}`;
+      // Chrome opens the app from an intent: link; without the app it offers the download instead.
+      widgetConnect.href = `intent://setup?${q}#Intent;scheme=ytsummary;package=com.vidsum.widget;S.browser_fallback_url=${encodeURIComponent(WIDGET_APK)};end`;
+    }).catch(() => { widgetConnect.hidden = true; });
+  }
+  panel.append(el('div', { className: 'panel-title' }, 'Remote server'), signInBlock, parallelBlock, whisperBlock, widgetBlock, ipBlock);
 
   function mount() {
     const status = document.querySelector('.col .panel');
