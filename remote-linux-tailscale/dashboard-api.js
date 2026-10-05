@@ -79,6 +79,10 @@ class JobStore {
       if (!/^[0-9a-f-]{36}\.json$/i.test(name)) continue;
       try {
         const job = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+        // Summaries finished before CompletedAt existed: their result file was written then.
+        if (job.State === 'completed' && !job.CompletedAt) {
+          try { job.CompletedAt = fs.statSync(path.join(dir, `${job.Id}.result.txt`)).mtime.toISOString(); } catch { /* no local result */ }
+        }
         this.jobs.push(job);
         this.sequence = Math.max(this.sequence, Number(job.Sequence) || 0);
       } catch { /* a damaged file is skipped, never fatal */ }
