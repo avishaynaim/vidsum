@@ -47,7 +47,8 @@ function widgetCounts(jobs, { paused = false } = {}) {
     running,
     queued,
     unread: completed.filter((j) => !j.ReadAt).length,
-    doneToday: completed.filter((j) => isToday(j.UpdatedAt) || isToday(j.ReadAt)).length,
+    // CompletedAt is recorded from 2026-10-05 on; older jobs fall back to their last update.
+    doneToday: completed.filter((j) => isToday(j.CompletedAt || j.UpdatedAt)).length,
     failed: jobs.filter((j) => j.State === 'error' || j.State === 'needs-review').length,
     paused: !!paused,
   };

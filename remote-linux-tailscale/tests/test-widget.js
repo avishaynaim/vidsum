@@ -10,6 +10,7 @@ const today = new Date().toISOString();
 const jobs = [
   { State: 'completed', UpdatedAt: today, ReadAt: null },
   { State: 'completed', UpdatedAt: '2020-01-01T00:00:00Z', ReadAt: '2020-01-02T00:00:00Z' },
+  { State: 'completed', CompletedAt: '2020-01-01T00:00:00Z', UpdatedAt: today, ReadAt: today }, // read today, done long ago
   { State: 'queued' },
   { State: 'queued', WatchLater: true },
   { State: 'gemini' },

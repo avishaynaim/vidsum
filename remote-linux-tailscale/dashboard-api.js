@@ -687,6 +687,7 @@ class Scheduler {
       job.PartResultUrls = (result.parts || []).map((p) => p.url).filter(Boolean);
       job.FinalProvider = result.provider;
       job.State = 'completed';
+      job.CompletedAt = now(); // the widget's "done today" (UpdatedAt also moves on read marks)
       job.Message = `Summary ready (final part via ${result.provider}).`;
       job.ProviderName = result.provider;
       job.AutoRetryAttempts = 0;
@@ -973,7 +974,7 @@ class Scheduler {
     const text = await this.attachRunner(parsed.href);
     this.store.setResult(job, text);
     Object.assign(job, {
-      State: 'completed', ResultUrl: '', AutoRetryAfterUtc: null, WaitUntilUtc: null,
+      State: 'completed', CompletedAt: now(), ResultUrl: '', AutoRetryAfterUtc: null, WaitUntilUtc: null,
       Message: 'Reconciled: the answer in the attached conversation was saved as this video\'s summary.',
     });
     this.store.save(job);
