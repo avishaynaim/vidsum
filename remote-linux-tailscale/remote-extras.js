@@ -1220,6 +1220,9 @@
     const box = el('details', { className: 'new-videos', open: openNewVideos.has(source.id) });
     box.addEventListener('toggle', () => { if (box.open) openNewVideos.add(source.id); else openNewVideos.delete(source.id); });
     box.append(el('summary', {}, `Show the ${plural(videos.length, 'new video')}`));
+    if (source.kind === 'channel' && videos.length > 1) {
+      box.append(el('p', { className: 'muted new-videos-hint' }, 'Newest first. Summarizing one also clears the older ones from the count; only newer videos stay new.'));
+    }
     for (const v of videos) {
       const watch = `https://www.youtube.com/watch?v=${encodeURIComponent(v.videoId)}`;
       const add = el('button', { type: 'button', className: 'primary' }, '＋ Summarize');

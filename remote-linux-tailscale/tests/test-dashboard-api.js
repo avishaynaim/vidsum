@@ -417,9 +417,16 @@ async function testNewVideoCounts() {
   const added = store.get(one.jobId);
   assert.strictEqual(added.SummaryLevel, 'reg');
   assert.strictEqual(added.SourceKind, 'channel');
-  assert.deepStrictEqual(one.pending.ids, ['V6xxxxxxxxx', 'V4xxxxxxxxx']);
+  assert.deepStrictEqual(one.pending.ids, ['V6xxxxxxxxx'], 'on a channel only the newer one is still new');
+  peek = await handleApi(scheduler, 'POST', '/api/sources/peek', { id: chan.id });
+  assert.deepStrictEqual(peek.ids, ['V6xxxxxxxxx'], 'and the next check agrees');
   await assert.rejects(handleApi(scheduler, 'POST', '/api/sources/add-video', { id: chan.id, videoId: 'V5xxxxxxxxx' }), (e) => e.status === 404);
-  store.remove(added); // the rest of this test counts from before
+  // The rest of this test counts from before: undo that pick.
+  store.remove(added);
+  const saved = store.loadSources();
+  const ch = saved.find((x) => x.id === chan.id);
+  ch.seenIds = ch.seenIds.filter((v) => v !== 'V5xxxxxxxxx' && v !== 'V4xxxxxxxxx');
+  store.saveSources(saved);
 
   // One of the new ones gets summarized some other way: it no longer counts.
   await add(scheduler, 'V4xxxxxxxxx', { summaryLevel: 'reg' });

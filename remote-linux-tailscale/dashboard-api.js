@@ -565,7 +565,7 @@ class Scheduler {
   }
 
   // "＋ Summarize" on one video in a saved list's new videos: queued at the list's level and
-  // labelled with the list, like an import; it leaves the new-videos list.
+  // labelled with the list, like an import. On a channel the older new videos stop counting too.
   addSourceVideo(id, videoId) {
     const source = this.findSource(id);
     const video = ((source.pending && source.pending.videos) || []).find((v) => v.videoId === videoId);
@@ -577,9 +577,17 @@ class Scheduler {
     const sources = this.store.loadSources();
     const entry = sources.find((s) => s.id === id);
     if (entry && entry.pending) {
-      entry.pending.videos = (entry.pending.videos || []).filter((v) => v.videoId !== videoId);
-      entry.pending.ids = (entry.pending.ids || []).filter((v) => v !== videoId);
-      entry.pending.count = entry.pending.ids.length;
+      const list = entry.pending.videos || [];
+      const at = list.findIndex((v) => v.videoId === videoId);
+      // A channel lists newest first: picking one makes the older new videos no longer new
+      // (only the ones uploaded after it still are). They count as seen, as after an import.
+      // A playlist has no such order: only the picked video leaves the list.
+      const dropped = entry.kind === 'channel' ? list.slice(at) : [list[at]];
+      const keep = entry.kind === 'channel' ? list.slice(0, at) : list.filter((v) => v.videoId !== videoId);
+      entry.seenIds = [...new Set([...dropped.map((v) => v.videoId), ...(entry.seenIds || [])])].slice(0, SEEN_IDS_KEEP);
+      entry.pending.videos = keep;
+      entry.pending.ids = keep.map((v) => v.videoId);
+      entry.pending.count = keep.length;
       this.store.saveSources(sources);
     }
     return { jobId: job.Id, pending: entry ? entry.pending : null };
