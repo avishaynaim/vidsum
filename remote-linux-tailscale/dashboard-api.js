@@ -384,7 +384,7 @@ class Scheduler {
       paused: this.paused, pauseReason: this.pauseReason, pauseKind: this.pauseKind,
       autoRetryLimit: AUTO_RETRY_LIMIT, pausedWorkers: jobs.filter((j) => j.State === 'paused').length,
       maxConcurrent: this.maxConcurrent, startIntervalMilliseconds: 0, mobileOrigin: '',
-      whisperFallback: this.settings.whisperFallback !== false, whisperMissing: require('./whisper').whisperMissing(),
+      whisperFallback: this.settings.whisperFallback !== false, whisperMissing: require('./whisper').whisperMissing(), whisperEngine: require('./whisper').whisperEngine(),
       providerOrder: PROVIDERS,
       queueNote: this.queueNote(),
       active: jobs.filter((j) => !isTerminal(j) && j.State !== 'queued').length,

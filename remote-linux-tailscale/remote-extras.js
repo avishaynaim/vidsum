@@ -49,7 +49,7 @@
   });
   const whisperBlock = el('div', {},
     el('div', { className: 'panel-title', style: 'margin-top:12px' }, 'Videos with no captions'),
-    el('label', { className: 'row', style: 'gap:8px;align-items:center' }, whisperBox, 'Local speech-to-text fallback (Whisper)'),
+    el('label', { className: 'row', style: 'gap:8px;align-items:center' }, whisperBox, 'Speech-to-text fallback (Whisper)'),
     whisperNote);
   const parallelBlock = el('div', {},
     el('div', { className: 'panel-title', style: 'margin-top:12px' }, 'Videos at the same time'), parallel,
@@ -1214,6 +1214,9 @@
     whisperBox.checked = status.whisperFallback !== false;
     whisperNote.textContent = status.whisperMissing
       ? `Not set up on the server (missing ${status.whisperMissing}); videos with no captions fail as before.`
+      : status.whisperEngine === 'modal'
+      ? 'A video with no captions is transcribed through NotebookLM (about 2 minutes). Only if that fails, Whisper ' +
+        'transcribes it on a free cloud GPU (Modal): a couple of minutes per hour of audio, nothing heavy on this server.'
       : 'A video with no captions is transcribed through NotebookLM (about 2 minutes). Only if that fails, Whisper ' +
         'transcribes it on this server, and this machine is far too slow for it: measured over 30× the video length ' +
         '(a 1-hour video takes a day or more, with 3 of the 4 cores busy). Best left off here.';

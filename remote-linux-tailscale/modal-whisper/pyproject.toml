@@ -1,0 +1,6 @@
+[project]
+name = "vidsum-modal-whisper"
+version = "0.1.0"
+description = "Whisper on a Modal GPU for vidsum (videos with no captions)"
+requires-python = ">=3.11"
+dependencies = ["modal>=1.0"]
