@@ -1444,8 +1444,9 @@
   const message = document.querySelector('#message');
   if (message) message.before(queueNote);
   const refreshQueueNote = () => api('/api/status').then((status) => {
-    queueNote.textContent = status.queueNote || '';
-    queueNote.hidden = !status.queueNote;
+    const note = [status.queueNote, status.providerNote].filter(Boolean).join(' ');
+    queueNote.textContent = note;
+    queueNote.hidden = !note;
   }).catch(() => {});
   refreshQueueNote();
   setInterval(whileNotReading(refreshQueueNote), 10000);

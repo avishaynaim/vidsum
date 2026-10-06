@@ -50,10 +50,40 @@ function throwIfStopped(signal) {
 // One generation at a time per provider, shared by every video running in parallel (the
 // Windows engine's per-provider gates). A stage takes the first FREE provider in its
 // preferred order, so three videos keep ChatGPT, Gemini and Claude busy at the same time.
+const SICK_BASE_MS = 10 * 60 * 1000; // first strike: 10 min, then 20, 40, ... capped at an hour
+const SICK_MAX_MS = 60 * 60 * 1000;
+
 class ProviderPool {
-  constructor() {
+  constructor({ now = () => Date.now() } = {}) {
     this.busy = new Set();
     this.waiters = [];
+    this.now = now;
+    this.strikes = new Map(); // provider -> consecutive failed stages (infrastructure / still ambiguous)
+    this.sickUntil = new Map(); // provider -> ms; tried last until then
+  }
+
+  // A provider that just failed a stage on infrastructure grounds (page not answering, composer
+  // missing, no reply) is tried after the healthy ones for a while: when ChatGPT's page stopped
+  // answering, every video lost about 2 minutes on it before moving on. One success clears it.
+  markFailed(name) {
+    const strikes = (this.strikes.get(name) || 0) + 1;
+    this.strikes.set(name, strikes);
+    this.sickUntil.set(name, this.now() + Math.min(SICK_MAX_MS, SICK_BASE_MS * 2 ** (strikes - 1)));
+  }
+
+  markOk(name) {
+    this.strikes.delete(name);
+    this.sickUntil.delete(name);
+  }
+
+  isSick(name) {
+    return (this.sickUntil.get(name) || 0) > this.now();
+  }
+
+  // For the dashboard: providers currently deprioritized, with when they are tried normally again.
+  health() {
+    return [...this.sickUntil].filter(([name]) => this.isSick(name))
+      .map(([name, until]) => ({ name, until: new Date(until).toISOString(), strikes: this.strikes.get(name) || 0 }));
   }
 
   isBusy(name) {
@@ -67,7 +97,9 @@ class ProviderPool {
       const take = () => {
         const candidates = order.filter((p) => !exclude.has(p));
         if (!candidates.length) { resolve(null); return true; }
-        const free = candidates.find((p) => !this.busy.has(p));
+        // Healthy providers first; a sick one is used only when nothing else is left to try.
+        const healthy = candidates.filter((p) => !this.isSick(p));
+        const free = (healthy.length ? healthy : candidates).find((p) => !this.busy.has(p));
         if (!free) return false;
         this.busy.add(free);
         resolve(free);
@@ -115,6 +147,7 @@ async function runStage(checkpoint, prompt, { onStatus = () => {}, signal = null
     }
     const provider = await pool.acquire(preferred, attempted, signal);
     if (!provider) break;
+    if (pool.isSick(provider)) onStatus(`${provider} has been failing; trying it anyway because nothing healthier is left.`);
     attempted.add(provider);
     try {
       let infraAttempts = 0;
@@ -128,6 +161,7 @@ async function runStage(checkpoint, prompt, { onStatus = () => {}, signal = null
           throwIfStopped(signal);
           onStatus(`Sending to ${provider}...`);
           const reply = await sendToProvider(provider, prompt, { signal });
+          pool.markOk(provider);
           checkpoint.rotationCursor = next(provider);
           // { text, url } from send.js; a plain string is accepted too.
           return typeof reply === 'string' ? { text: reply, provider, url: null } : { text: reply.text, provider, url: reply.url || null };
@@ -145,6 +179,7 @@ async function runStage(checkpoint, prompt, { onStatus = () => {}, signal = null
               continue;
             }
             onStatus(`${provider}: still ambiguous after one resend; rotating to next provider (duplicate risk accepted).`);
+            pool.markFailed(provider);
             break;
           }
           if (isTransientInfrastructureError(err)) {
@@ -156,6 +191,7 @@ async function runStage(checkpoint, prompt, { onStatus = () => {}, signal = null
               continue;
             }
             onStatus(`${provider}: transient infrastructure error persisted after 3 attempts; rotating.`);
+            pool.markFailed(provider);
             break;
           }
           // Unclassified error: do not silently retry forever; treat as a single-shot

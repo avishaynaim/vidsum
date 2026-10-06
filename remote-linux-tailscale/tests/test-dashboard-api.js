@@ -626,6 +626,50 @@ async function testParallel() {
   await tick(); await tick();
 }
 
+// A provider that keeps failing is tried last for a while; one success clears it.
+async function testProviderHealth() {
+  const { ProviderPool } = require('../rotate');
+  let t = 1_000_000;
+  const pool = new ProviderPool({ now: () => t });
+  const order = ['ChatGPT', 'Gemini', 'Claude'];
+  pool.markFailed('ChatGPT');
+  assert.ok(pool.isSick('ChatGPT'));
+  assert.strictEqual(await pool.acquire(order, new Set()), 'Gemini', 'the healthy provider goes first');
+  assert.strictEqual(await pool.acquire(order, new Set()), 'Claude');
+  pool.release('Gemini'); pool.release('Claude');
+
+  // Everything unhealthy: still tried, in the usual order.
+  pool.markFailed('Gemini'); pool.markFailed('Claude');
+  assert.strictEqual(await pool.acquire(order, new Set()), 'ChatGPT', 'no healthy provider left: use the order as it is');
+  pool.release('ChatGPT');
+
+  // Waits for the healthy provider rather than using a sick one while it is busy.
+  pool.markOk('Claude');
+  pool.busy.add('Claude');
+  let got = null;
+  const waiting = pool.acquire(order, new Set()).then((p) => { got = p; });
+  await tick();
+  assert.strictEqual(got, null, 'Claude is the only healthy one and is busy: wait');
+  pool.release('Claude');
+  await waiting;
+  assert.strictEqual(got, 'Claude');
+  pool.release('Claude');
+
+  // Strikes grow the pause (10, 20, 40 min ... capped) and time heals it.
+  const fresh = new ProviderPool({ now: () => t });
+  fresh.markFailed('ChatGPT');
+  t += 9 * 60 * 1000; assert.ok(fresh.isSick('ChatGPT'));
+  t += 2 * 60 * 1000; assert.ok(!fresh.isSick('ChatGPT'), 'after 10 minutes it is tried normally again');
+  fresh.markFailed('ChatGPT');
+  t += 15 * 60 * 1000; assert.ok(fresh.isSick('ChatGPT'), 'second strike: 20 minutes');
+  for (let i = 0; i < 10; i++) fresh.markFailed('ChatGPT');
+  t += 59 * 60 * 1000; assert.ok(fresh.isSick('ChatGPT'));
+  t += 2 * 60 * 1000; assert.ok(!fresh.isSick('ChatGPT'), 'never longer than an hour');
+  fresh.markFailed('Gemini'); fresh.markOk('Gemini');
+  assert.ok(!fresh.isSick('Gemini'), 'a success clears it');
+  assert.deepStrictEqual(fresh.health(), []);
+}
+
 async function testProviderPool() {
   const { ProviderPool } = require('../rotate');
   const pool = new ProviderPool();
@@ -879,6 +923,7 @@ module.exports = async function run() {
   await testSearch();
   await testBrowserRecycling();
   await testParallel();
+  await testProviderHealth();
   await testProviderPool();
   await testSpaces();
   await testRateLimitWait();

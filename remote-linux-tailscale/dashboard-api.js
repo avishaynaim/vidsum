@@ -402,6 +402,7 @@ class Scheduler {
       whisperFallback: this.settings.whisperFallback !== false, whisperMissing: require('./whisper').whisperMissing(), whisperEngine: require('./whisper').whisperEngine(),
       providerOrder: PROVIDERS,
       queueNote: this.queueNote(),
+      providerNote: this.providerNote(),
       active: jobs.filter((j) => !isTerminal(j) && j.State !== 'queued').length,
       queued: jobs.filter((j) => j.State === 'queued').length,
       reviewRequired: jobs.some((j) => j.State === 'needs-review'),
@@ -680,6 +681,14 @@ class Scheduler {
   deleteSource(id) {
     this.findSource(id);
     this.store.saveSources(this.store.loadSources().filter((s) => s.id !== id));
+  }
+
+  // Which AI sites are being tried last because they keep failing (rotate.js ProviderPool).
+  providerNote() {
+    const sick = require('./rotate').defaultPool.health();
+    if (!sick.length) return '';
+    const at = (iso) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
+    return sick.map((p) => `${p.name} keeps failing: tried last until ${at(p.until)}.`).join(' ');
   }
 
   // Why free slots stay empty while videos are queued (shown on the page; '' when nothing holds them).
