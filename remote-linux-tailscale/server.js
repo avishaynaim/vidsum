@@ -504,11 +504,15 @@ function createServer({
       if (RESUME_PATHS.includes(url.pathname) && req.method === 'GET') {
         const space = url.pathname.split('/')[1];
         const last = scheduler.lastOpened(space);
-        // The page opens #summary=<id> in the viewer, which resumes the saved place.
+        // Served here, not redirected: the address stays /torah/last, so a bookmark or home-screen
+        // shortcut saved from it keeps opening the latest summary (a redirect saved one summary's
+        // #summary= link). The viewer opens it and resumes the saved place.
         const supplied = url.searchParams.get('token');
-        const query = supplied ? `?token=${encodeURIComponent(supplied)}` : '';
-        res.writeHead(302, { Location: `/${space}${query}${last ? `#summary=${last.Id}` : ''}`, 'Cache-Control': 'no-store' });
-        res.end();
+        const headers = supplied && token ? { 'Set-Cookie': sessionCookie(supplied) } : {};
+        // The latest always wins over a #summary= the address may carry (it gets saved with it).
+        const open = last ? `<script>window.__openSummary=${JSON.stringify(last.Id)};</script>\n` : '';
+        const html = buildDashboard({ seedToken: dashboardToken(token), space }).html.replace('</head>', `${open}</head>`);
+        sendPage(res, html, 'text/html; charset=utf-8', headers);
         return;
       }
 
