@@ -98,7 +98,7 @@ async function main() {
       YT_SUMMARY_TOKEN: args.token,
       CDP_HOST: '127.0.0.1',
       CDP_PORT: String(chrome.port),
-      ...(screen ? { VNC_WEB_PORT: String(screen.webPort) } : {}),
+      ...(screen && screen.webPort ? { VNC_WEB_PORT: String(screen.webPort) } : {}),
     },
     stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
   });

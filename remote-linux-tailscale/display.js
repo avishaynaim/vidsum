@@ -99,18 +99,27 @@ async function startVirtualDisplay() {
     launch('Xvfb', [`:${display}`, '-screen', '0', `${SCREEN.width}x${SCREEN.height}x24`, '-nolisten', 'tcp']);
     await waitFor(() => fs.existsSync(`/tmp/.X11-unix/X${display}`), 'Xvfb');
 
-    launch('x11vnc', ['-display', `:${display}`, '-localhost', '-rfbport', String(vncPort),
-      '-nopw', '-forever', '-shared', '-quiet', '-noxdamage']);
-    await waitFor(() => portOpen(vncPort), 'x11vnc');
-
-    launch('websockify', ['--web', findNoVncDir(), `127.0.0.1:${webPort}`, `127.0.0.1:${vncPort}`]);
-    await waitFor(() => portOpen(webPort), 'websockify');
   } catch (err) {
     stop();
     throw err;
   }
 
-  return { display: `:${display}`, webPort, procs, stop, screen: SCREEN };
+  // The sign-in screen (x11vnc + websockify) is only for logging in to the AI sites; right after
+  // a boot x11vnc can take longer than usual, and once it did not come up in 10 s and the whole
+  // service stayed down. Wait longer, and if it still fails, run without the sign-in screen.
+  let screenPort = webPort;
+  try {
+    launch('x11vnc', ['-display', `:${display}`, '-localhost', '-rfbport', String(vncPort),
+      '-nopw', '-forever', '-shared', '-quiet', '-noxdamage']);
+    await waitFor(() => portOpen(vncPort), 'x11vnc', 30000);
+    launch('websockify', ['--web', findNoVncDir(), `127.0.0.1:${webPort}`, `127.0.0.1:${vncPort}`]);
+    await waitFor(() => portOpen(webPort), 'websockify', 30000);
+  } catch (err) {
+    console.error(`Sign-in screen unavailable (${err.message}); continuing without it.`);
+    screenPort = null;
+  }
+
+  return { display: `:${display}`, webPort: screenPort, procs, stop, screen: SCREEN };
 }
 
 module.exports = { startVirtualDisplay, displayEnv, missingTools, findFreeDisplay, findNoVncDir, SCREEN };
